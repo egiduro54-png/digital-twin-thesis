@@ -1870,7 +1870,7 @@ def render_validation():
         with vtab3:
             try:
                 fig3 = _plot_risk_rank_comparison(results)
-                if fig3:
+                if fig3 is not None:
                     st.pyplot(fig3, use_container_width=True)
                     plt.close(fig3)
                     st.caption(
