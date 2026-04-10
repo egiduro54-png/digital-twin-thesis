@@ -398,22 +398,35 @@ class BaselineRiskScorer:
         "hhi":            0.10,
     }
 
+    @staticmethod
+    def _safe(v, default: float = 0.0) -> float:
+        """Return default when v is None or NaN — avoids nan poisoning in arithmetic."""
+        if v is None:
+            return default
+        try:
+            f = float(v)
+            return default if np.isnan(f) or np.isinf(f) else f
+        except (TypeError, ValueError):
+            return default
+
     def score(self, portfolio: Portfolio) -> dict:
         metrics = portfolio.get_metrics()
         composition = portfolio.get_composition()
 
-        vol = metrics.get("volatility_annual_pct") or 0.0
-        sharpe = metrics.get("sharpe_ratio") or 0.0
-        drawdown_abs = abs(metrics.get("max_drawdown_pct") or 0.0)
-        beta = max(metrics.get("beta") or 1.0, 0.0)
-        hhi = composition.get("concentration", {}).get("herfindahl_index", 0.0)
+        vol          = self._safe(metrics.get("volatility_annual_pct"), 0.0)
+        sharpe       = self._safe(metrics.get("sharpe_ratio"),          0.0)
+        drawdown_abs = abs(self._safe(metrics.get("max_drawdown_pct"),  0.0))
+        beta         = self._safe(metrics.get("beta"),                  1.0)
+        hhi          = self._safe(
+            composition.get("concentration", {}).get("herfindahl_index"), 0.0
+        )
 
         # Normalize each metric to [0, 1] using empirically chosen ranges
-        vol_n      = min(vol / 45.0, 1.0)
-        sharpe_n   = max(0.0, min(1.0, (2.5 - sharpe) / 5.0))
-        dd_n       = min(drawdown_abs / 65.0, 1.0)
-        beta_n     = min(beta / 2.5, 1.0)
-        hhi_n      = min(hhi / 0.50, 1.0)
+        vol_n    = min(vol / 45.0, 1.0)
+        sharpe_n = max(0.0, min(1.0, (2.5 - sharpe) / 5.0))
+        dd_n     = min(drawdown_abs / 65.0, 1.0)
+        beta_n   = min(max(beta, 0.0) / 2.5, 1.0)
+        hhi_n    = min(hhi / 0.50, 1.0)
 
         composite = (
             self.FACTOR_WEIGHTS["volatility"]     * vol_n +
@@ -424,12 +437,12 @@ class BaselineRiskScorer:
         ) * 100.0
 
         return {
-            "risk_score":        round(composite, 2),
-            "volatility_pct":    round(vol, 2),
-            "sharpe_ratio":      round(sharpe, 3),
-            "max_drawdown_pct":  round(-drawdown_abs, 2),
-            "beta":              round(beta, 3),
-            "hhi":               round(hhi, 4),
+            "risk_score":       round(composite, 2),
+            "volatility_pct":   round(vol, 2),
+            "sharpe_ratio":     round(sharpe, 3),
+            "max_drawdown_pct": round(-drawdown_abs, 2),
+            "beta":             round(beta, 3),
+            "hhi":              round(hhi, 4),
         }
 
 
