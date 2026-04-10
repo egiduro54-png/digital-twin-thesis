@@ -24,6 +24,11 @@ from src.risk_monitor import RiskMonitor
 from src.scenario_engine import ScenarioEngine
 from src.recommendations import RecommendationEngine
 from src.explainer import Explainer
+from src.validation import (
+    ValidationExperiment,
+    ValidationResults,
+    PORTFOLIO_ARCHETYPES,
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -76,6 +81,7 @@ def _init_state():
         "portfolio_name": "",
         "risk_profile": "moderate",
         "last_loaded": None,
+        "validation_results": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1429,6 +1435,505 @@ HHI = Σ(βάρος_i²)
 
 
 # ---------------------------------------------------------------------------
+# Tab 5: Πειραματική Αξιολόγηση (Experimental Validation)
+# ---------------------------------------------------------------------------
+
+def _val_metric_card(label: str, baseline_val, proposed_val,
+                     higher_is_better: bool = True, fmt: str = ".3f"):
+    """Render a side-by-side metric card: baseline vs proposed."""
+    if baseline_val is None or proposed_val is None:
+        return
+    try:
+        b = float(baseline_val)
+        p = float(proposed_val)
+    except (TypeError, ValueError):
+        return
+
+    delta = p - b
+    if higher_is_better:
+        color = "#28a745" if delta > 0 else ("#dc3545" if delta < 0 else "#6c757d")
+        arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+    else:
+        color = "#28a745" if delta < 0 else ("#dc3545" if delta > 0 else "#6c757d")
+        arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+
+    st.markdown(
+        f"""
+        <div style="background:#f8f9fa;border-radius:8px;padding:10px 14px;margin-bottom:8px">
+          <div style="font-size:0.78rem;color:#6c757d;margin-bottom:4px">{label}</div>
+          <div style="display:flex;gap:24px;align-items:center">
+            <div>
+              <span style="font-size:0.7rem;color:#888">Baseline</span><br>
+              <strong style="font-size:1.1rem">{b:{fmt}}</strong>
+            </div>
+            <div>
+              <span style="font-size:0.7rem;color:#888">Proposed</span><br>
+              <strong style="font-size:1.1rem">{p:{fmt}}</strong>
+            </div>
+            <div style="color:{color};font-size:1.1rem">
+              {arrow} <strong>{abs(delta):{fmt}}</strong>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _plot_scatter_comparison(results: ValidationResults):
+    """Scatter plot: predicted risk score vs actual drawdown, both systems."""
+    import numpy as np
+
+    valid_mask = [
+        not (np.isnan(b) or np.isnan(p) or np.isnan(d))
+        for b, p, d in zip(results.baseline_scores, results.proposed_scores,
+                           results.actual_drawdowns)
+    ]
+    b_scores = [s for s, v in zip(results.baseline_scores, valid_mask) if v]
+    p_scores = [s for s, v in zip(results.proposed_scores, valid_mask) if v]
+    drawdowns = [d for d, v in zip(results.actual_drawdowns, valid_mask) if v]
+    archetypes = [a for a, v in zip(results.portfolio_archetypes, valid_mask) if v]
+
+    arch_colors = {
+        "Συγκεντρωμένο":          "#dc3545",
+        "Κλαδικό":                "#fd7e14",
+        "Μέτρια Διαφοροποίηση":   "#ffc107",
+        "Καλά Διαφοροποιημένο":   "#28a745",
+        "Συντηρητικό":            "#17a2b8",
+    }
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+
+    for ax, scores, title, method_color in [
+        (ax1, b_scores, "Baseline (Στατικές Μετρικές)", "#6c757d"),
+        (ax2, p_scores, "Proposed (Digital Twin)",       "#0d6efd"),
+    ]:
+        for arch, score, dd in zip(archetypes, scores, drawdowns):
+            color = arch_colors.get(arch, "#888")
+            ax.scatter(score, dd, c=color, s=60, alpha=0.85,
+                       edgecolors="white", linewidths=0.5)
+
+        # Trend line
+        if len(scores) > 2:
+            z = np.polyfit(scores, drawdowns, 1)
+            xs = np.linspace(min(scores), max(scores), 100)
+            ax.plot(xs, np.poly1d(z)(xs), "--", color=method_color, alpha=0.7, linewidth=1.5)
+
+        # Spearman ρ annotation
+        rho_key = "baseline_rho" if ax is ax1 else "proposed_rho"
+        pval_key = "baseline_pval" if ax is ax1 else "proposed_pval"
+        rho = results.metrics.get("spearman", {}).get(rho_key, float("nan"))
+        pval = results.metrics.get("spearman", {}).get(pval_key, float("nan"))
+        sig_star = "***" if pval < 0.001 else ("**" if pval < 0.01 else ("*" if pval < 0.05 else ""))
+        ax.text(
+            0.05, 0.96,
+            f"Spearman ρ = {rho:.3f}{sig_star}\np = {pval:.4f}",
+            transform=ax.transAxes, fontsize=9, va="top",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+        )
+        ax.axhline(0, color="gray", linewidth=0.5, linestyle=":")
+        ax.axhline(-15, color="#dc3545", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.set_xlabel("Risk Score", fontsize=10)
+        ax.set_ylabel("Πραγματικό Max Drawdown (%)", fontsize=10)
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.grid(True, alpha=0.3)
+
+    # Legend
+    legend_patches = [
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=c,
+                   markersize=8, label=arch)
+        for arch, c in arch_colors.items()
+    ]
+    fig.legend(handles=legend_patches, loc="lower center", ncol=5,
+               fontsize=8, frameon=True, bbox_to_anchor=(0.5, -0.05))
+    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    return fig
+
+
+def _plot_precision_recall_bar(results: ValidationResults):
+    """Bar chart comparing precision, recall, F1 between baseline and proposed."""
+    fd = results.metrics.get("fragile_detection", {})
+
+    labels = ["Precision", "Recall", "F1-Score"]
+    b_vals = [
+        fd.get("baseline_precision") or 0,
+        fd.get("baseline_recall")    or 0,
+        fd.get("baseline_f1")        or 0,
+    ]
+    p_vals = [
+        fd.get("proposed_precision") or 0,
+        fd.get("proposed_recall")    or 0,
+        fd.get("proposed_f1")        or 0,
+    ]
+
+    x = np.arange(len(labels))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars_b = ax.bar(x - width / 2, b_vals, width, label="Baseline",
+                    color="#6c757d", alpha=0.85, edgecolor="white")
+    bars_p = ax.bar(x + width / 2, p_vals, width, label="Proposed (Digital Twin)",
+                    color="#0d6efd", alpha=0.85, edgecolor="white")
+
+    for bar in bars_b + bars_p:
+        h = bar.get_height()
+        if h > 0:
+            ax.text(bar.get_x() + bar.get_width() / 2, h + 0.01,
+                    f"{h:.2f}", ha="center", va="bottom", fontsize=9)
+
+    ax.set_ylim(0, 1.15)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.set_ylabel("Score", fontsize=10)
+    ax.set_title(
+        f"Εντοπισμός Ευάλωτων Χαρτοφυλακίων\n"
+        f"(threshold: drawdown < {fd.get('threshold_pct', -15):.0f}%)",
+        fontsize=11, fontweight="bold",
+    )
+    ax.legend(fontsize=9)
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    return fig
+
+
+def _plot_risk_rank_comparison(results: ValidationResults):
+    """Visualize how risk rankings compare between the two systems and ground truth."""
+    import numpy as np
+
+    valid_idx = [
+        i for i in range(results.n_portfolios)
+        if not (np.isnan(results.baseline_scores[i]) or
+                np.isnan(results.proposed_scores[i]) or
+                np.isnan(results.actual_drawdowns[i]))
+    ]
+    if len(valid_idx) < 4:
+        return None
+
+    b_scores  = [results.baseline_scores[i]  for i in valid_idx]
+    p_scores  = [results.proposed_scores[i]  for i in valid_idx]
+    drawdowns = [results.actual_drawdowns[i] for i in valid_idx]
+
+    # Convert to ranks (1 = highest risk)
+    def to_rank(vals, ascending=False):
+        arr = np.array(vals)
+        if ascending:
+            return arr.argsort().argsort() + 1
+        return (-arr).argsort().argsort() + 1
+
+    b_rank  = to_rank(b_scores)
+    p_rank  = to_rank(p_scores)
+    dd_rank = to_rank(drawdowns)  # more negative = riskier
+
+    labels  = [results.portfolio_labels[i] for i in valid_idx]
+    n = len(valid_idx)
+
+    fig, ax = plt.subplots(figsize=(10, max(5, n * 0.35)))
+    y = np.arange(n)
+
+    ax.scatter(b_rank,  y, marker="o", c="#6c757d", s=50, label="Baseline rank",  zorder=3)
+    ax.scatter(p_rank,  y, marker="s", c="#0d6efd", s=50, label="Proposed rank",  zorder=3)
+    ax.scatter(dd_rank, y, marker="D", c="#28a745", s=50, label="Actual DD rank", zorder=3)
+
+    for i in range(n):
+        ax.plot([b_rank[i], dd_rank[i]], [i, i], color="#6c757d", alpha=0.3, linewidth=1)
+        ax.plot([p_rank[i], dd_rank[i]], [i, i], color="#0d6efd", alpha=0.3, linewidth=1)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=7)
+    ax.set_xlabel("Risk Rank (1 = πιο επικίνδυνο)", fontsize=10)
+    ax.set_title("Σύγκριση Κατάταξης Κινδύνου\n(Baseline vs Proposed vs Πραγματική Απόδοση)",
+                 fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9)
+    ax.grid(True, axis="x", alpha=0.3)
+    ax.invert_yaxis()
+    fig.tight_layout()
+    return fig
+
+
+def render_validation():
+    """Tab 5: Πειραματική Αξιολόγηση — Σύγκριση Baseline vs Digital Twin."""
+    st.subheader("🔬 Πειραματική Αξιολόγηση Συστήματος")
+    st.markdown(
+        """
+        Αυτό το πείραμα **επικυρώνει ακαδημαϊκά** την προστιθέμενη αξία του
+        Digital Twin έναντι ενός naive baseline, χρησιμοποιώντας **30 συνθετικά
+        χαρτοφυλάκια** και πραγματικά ιστορικά δεδομένα.
+
+        | Σύστημα | Περιγραφή |
+        |---------|-----------|
+        | **Baseline** | Στατικές μετρικές μόνο (volatility, Sharpe, drawdown, beta, HHI) |
+        | **Proposed** | Digital Twin: RiskMonitor alerts + ScenarioEngine simulation |
+
+        **Μεθοδολογία:** Walk-forward split → Analysis window (60%) | Evaluation window (40%)
+        **Ground truth:** Πραγματικό max drawdown στο παράθυρο αξιολόγησης
+        """
+    )
+
+    # ── Portfolio overview ─────────────────────────────────────────────────
+    with st.expander("📋 30 Συνθετικά Χαρτοφυλάκια (Πλήρης Κατάλογος)", expanded=False):
+        arch_df = pd.DataFrame([
+            {
+                "ID": a["id"],
+                "Χαρτοφυλάκιο": a["label"],
+                "Κατηγορία": a["archetype"],
+                "Tickers": ", ".join(a["tickers"]),
+                "Προφίλ": a["risk_profile"],
+            }
+            for a in PORTFOLIO_ARCHETYPES
+        ])
+        st.dataframe(arch_df, use_container_width=True, height=350)
+
+    # ── Run controls ───────────────────────────────────────────────────────
+    st.markdown("---")
+    col_btn, col_info = st.columns([2, 3])
+    with col_btn:
+        run_btn = st.button(
+            "🚀 Εκτέλεση Πειράματος",
+            type="primary",
+            help="Φορτώνει ιστορικά δεδομένα, βαθμολογεί 30 χαρτοφυλάκια και "
+                 "υπολογίζει στατιστικές σύγκρισης. Διαρκεί ~3-5 λεπτά.",
+        )
+    with col_info:
+        st.info(
+            "Το πείραμα φορτώνει 5 έτη ιστορικών δεδομένων από Yahoo Finance "
+            "για ~23 tickers και αξιολογεί 30 χαρτοφυλάκια. "
+            "Τα αποτελέσματα αποθηκεύονται στη συνεδρία."
+        )
+
+    # ── Run or show cached results ─────────────────────────────────────────
+    if run_btn or st.session_state.get("validation_results") is not None:
+        if run_btn:
+            # Clear previous results
+            st.session_state["validation_results"] = None
+
+            progress_bar = st.progress(0)
+            status_text  = st.empty()
+            total_steps  = len(PORTFOLIO_ARCHETYPES) + 6
+
+            def _cb(step: int, total: int, msg: str):
+                pct = int(step / total * 100)
+                progress_bar.progress(pct)
+                status_text.text(f"[{step}/{total}] {msg}")
+
+            try:
+                experiment = ValidationExperiment(
+                    history_years=5,
+                    split_fraction=0.60,
+                    progress_callback=_cb,
+                )
+                results = experiment.run()
+                st.session_state["validation_results"] = results
+                progress_bar.progress(100)
+                status_text.text("✅ Ολοκληρώθηκε!")
+                st.rerun()
+            except Exception as exc:
+                progress_bar.empty()
+                status_text.empty()
+                st.error(f"Σφάλμα κατά την εκτέλεση: {exc}")
+                st.exception(exc)
+                return
+
+        results: ValidationResults = st.session_state.get("validation_results")
+        if results is None:
+            return
+
+        # ── Experiment metadata ────────────────────────────────────────────
+        st.markdown("---")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Χαρτοφυλάκια", results.n_portfolios)
+        m2.metric("Παράθυρο Ανάλυσης", f"{results.analysis_start} → {results.analysis_end}")
+        m3.metric("Παράθυρο Αξιολόγησης", f"{results.eval_start} → {results.eval_end}")
+        m4.metric("Έγκυρα αποτελέσματα", results.metrics.get("n_valid", "—"))
+
+        # ── Key statistical metrics ────────────────────────────────────────
+        st.markdown("### 📊 Κύριες Μετρικές Σύγκρισης")
+
+        sp = results.metrics.get("spearman", {})
+        fd = results.metrics.get("fragile_detection", {})
+        mae = results.metrics.get("mae_proxy", {})
+        kt  = results.metrics.get("kendall", {})
+
+        col_l, col_r = st.columns(2)
+
+        with col_l:
+            st.markdown("#### Rank Correlation με Πραγματικό Drawdown")
+            _val_metric_card(
+                "Spearman ρ  (υψηλότερο = καλύτερο)",
+                sp.get("baseline_rho"), sp.get("proposed_rho"),
+                higher_is_better=True,
+            )
+            _val_metric_card(
+                "Kendall τ  (υψηλότερο = καλύτερο)",
+                kt.get("baseline_tau"), kt.get("proposed_tau"),
+                higher_is_better=True,
+            )
+
+            p_b = sp.get("baseline_pval")
+            p_p = sp.get("proposed_pval")
+            sig_b = "p < 0.05 ✅" if (p_b and p_b < 0.05) else f"p = {p_b:.3f}" if p_b else "—"
+            sig_p = "p < 0.05 ✅" if (p_p and p_p < 0.05) else f"p = {p_p:.3f}" if p_p else "—"
+            st.caption(f"Baseline: {sig_b} | Proposed: {sig_p}")
+
+            st.markdown("#### MAE Προβλεπόμενης vs Πραγματικής Απώλειας (%)")
+            _val_metric_card(
+                "MAE proxy (χαμηλότερο = καλύτερο)",
+                mae.get("baseline_mae_pct"), mae.get("proposed_mae_pct"),
+                higher_is_better=False, fmt=".2f",
+            )
+
+        with col_r:
+            st.markdown(
+                f"#### Εντοπισμός Ευάλωτων Χαρτοφυλακίων\n"
+                f"*(drawdown < {fd.get('threshold_pct', -15):.0f}%)*"
+            )
+            _val_metric_card(
+                "Precision (υψηλότερο = καλύτερο)",
+                fd.get("baseline_precision"), fd.get("proposed_precision"),
+                higher_is_better=True,
+            )
+            _val_metric_card(
+                "Recall  (υψηλότερο = καλύτερο)",
+                fd.get("baseline_recall"), fd.get("proposed_recall"),
+                higher_is_better=True,
+            )
+            _val_metric_card(
+                "F1-Score  (υψηλότερο = καλύτερο)",
+                fd.get("baseline_f1"), fd.get("proposed_f1"),
+                higher_is_better=True,
+            )
+
+            imp_f1  = fd.get("f1_improvement")
+            imp_sp  = sp.get("improvement")
+            imp_mae = mae.get("improvement_pct")
+
+            def _fmt_imp(v, suffix="", decimals=3):
+                if v is None:
+                    return "—"
+                sign = "+" if v > 0 else ""
+                return f"{sign}{v:.{decimals}f}{suffix}"
+
+            st.markdown(
+                f"""
+                <div style="background:#e8f5e9;border-radius:8px;padding:10px;margin-top:8px">
+                  <strong>Βελτίωση Digital Twin vs Baseline</strong><br>
+                  F1-Score: <strong>{_fmt_imp(imp_f1)}</strong> &nbsp;|&nbsp;
+                  Spearman ρ: <strong>{_fmt_imp(imp_sp)}</strong> &nbsp;|&nbsp;
+                  MAE: <strong>{_fmt_imp(-imp_mae if imp_mae is not None else None, '%', 2)}</strong>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # ── Visualizations ─────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### 📈 Οπτικοποίηση Αποτελεσμάτων")
+
+        vtab1, vtab2, vtab3 = st.tabs([
+            "🎯 Risk Score vs Actual Drawdown",
+            "📊 Precision / Recall / F1",
+            "🏆 Σύγκριση Κατάταξης",
+        ])
+
+        with vtab1:
+            try:
+                fig = _plot_scatter_comparison(results)
+                st.pyplot(fig, use_container_width=True)
+                plt.close(fig)
+                st.caption(
+                    "Κάθε σημείο είναι ένα χαρτοφυλάκιο. Χρωματισμός κατά κατηγορία. "
+                    "Διακεκομμένη κόκκινη γραμμή = threshold −15% (fragile). "
+                    "Ρ > 0 σημαίνει θετική συσχέτιση μεταξύ προβλεπόμενου κινδύνου και πραγματικής απώλειας."
+                )
+            except Exception as e:
+                st.warning(f"Σφάλμα γραφήματος: {e}")
+
+        with vtab2:
+            if fd.get("baseline_f1") is not None:
+                try:
+                    fig2 = _plot_precision_recall_bar(results)
+                    st.pyplot(fig2, use_container_width=True)
+                    plt.close(fig2)
+                    st.caption(
+                        f"Σύγκριση precision/recall/F1 για τον εντοπισμό χαρτοφυλακίων "
+                        f"που υπέστησαν drawdown > {abs(fd.get('threshold_pct', 15)):.0f}% "
+                        f"στην περίοδο αξιολόγησης. "
+                        f"Ευάλωτα χαρτοφυλάκια: {fd.get('n_fragile', 0)}/{results.metrics.get('n_valid', 0)}."
+                    )
+                except Exception as e:
+                    st.warning(f"Σφάλμα γραφήματος: {e}")
+            else:
+                st.info(
+                    "Δεν υπάρχουν αρκετά 'fragile' χαρτοφυλάκια για αυτή την περίοδο αξιολόγησης. "
+                    "Δοκιμάστε με διαφορετικό split ή περίοδο που περιλαμβάνει bear market."
+                )
+
+        with vtab3:
+            try:
+                fig3 = _plot_risk_rank_comparison(results)
+                if fig3:
+                    st.pyplot(fig3, use_container_width=True)
+                    plt.close(fig3)
+                    st.caption(
+                        "Κάθε χαρτοφυλάκιο παρουσιάζεται ως σειρά. "
+                        "Κύκλος=Baseline rank, Τετράγωνο=Proposed rank, Διαμάντι=Πραγματικό DD rank. "
+                        "Μικρότερη απόσταση μεταξύ τετραγώνου και διαμαντιού = ακριβέστερη πρόβλεψη."
+                    )
+            except Exception as e:
+                st.warning(f"Σφάλμα γραφήματος: {e}")
+
+        # ── Detailed table ─────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### 📋 Αναλυτικός Πίνακας Αποτελεσμάτων")
+        df = results.to_dataframe()
+
+        # Color-code the actual drawdown column
+        def _color_dd(val):
+            if pd.isna(val):
+                return ""
+            if val < -25:
+                return "background-color: #f8d7da; color: #721c24"
+            if val < -15:
+                return "background-color: #fff3cd; color: #856404"
+            if val < -5:
+                return "background-color: #d1ecf1; color: #0c5460"
+            return "background-color: #d4edda; color: #155724"
+
+        st.dataframe(
+            df.style.applymap(_color_dd, subset=["Πραγματικό Drawdown (%)"]),
+            use_container_width=True,
+            height=500,
+        )
+
+        # ── Export ─────────────────────────────────────────────────────────
+        csv_data = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇️ Λήψη αποτελεσμάτων CSV",
+            data=csv_data,
+            file_name="validation_results.csv",
+            mime="text/csv",
+        )
+
+        # ── Statistical summary (raw metrics) ─────────────────────────────
+        with st.expander("🔢 Πλήρη Στατιστικά (για παράρτημα διπλωματικής)", expanded=False):
+            import json, math
+
+            def _json_safe(obj):
+                """Convert nan/inf to None for JSON serialization."""
+                if isinstance(obj, dict):
+                    return {k: _json_safe(v) for k, v in obj.items()}
+                if isinstance(obj, list):
+                    return [_json_safe(v) for v in obj]
+                if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+                    return None
+                return obj
+
+            st.code(
+                json.dumps(_json_safe(results.metrics), indent=2, ensure_ascii=False),
+                language="json",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1450,65 +1955,83 @@ def main():
         return
 
     portfolio = st.session_state.get("portfolio")
-    if portfolio is None:
-        st.info(
-            "Φορτώστε ένα χαρτοφυλάκιο από το πλαϊνό μενού για να ξεκινήσετε. "
-            "Επιλέξτε δείγμα ή ανεβάστε το δικό σας CSV."
-        )
-        with st.expander("Μορφή αρχείου CSV"):
-            st.code(
-                "ticker,quantity,entry_price\n"
-                "AAPL,100,150.00\n"
-                "MSFT,50,300.00\n"
-                "SPY,200,380.00\n"
-                "BND,500,80.00\n",
-                language="csv",
-            )
-        with st.expander("Γλωσσάρι Χρηματοοικονομικών Όρων"):
-            explainer = Explainer()
-            for term, definition in explainer.GLOSSARY.items():
-                st.write(f"**{term}**: {definition}")
-        return
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    # Tab 5 (Πειραματική Αξιολόγηση) is always available, independent of portfolio
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Επισκόπηση Χαρτοφυλακίου",
         "🔀 Ανάλυση Σεναρίων",
         "⚠️ Παρακολούθηση Κινδύνου",
         "💡 Προτάσεις Αναδιάρθρωσης",
+        "🔬 Πειραματική Αξιολόγηση",
     ])
 
     with tab1:
-        try:
-            render_overview(portfolio)
-        except Exception as e:
-            st.error(f"Σφάλμα επισκόπησης: {e}")
-            st.exception(e)
+        if portfolio is None:
+            st.info(
+                "Φορτώστε ένα χαρτοφυλάκιο από το πλαϊνό μενού για να ξεκινήσετε. "
+                "Επιλέξτε δείγμα ή ανεβάστε το δικό σας CSV."
+            )
+            with st.expander("Μορφή αρχείου CSV"):
+                st.code(
+                    "ticker,quantity,entry_price\n"
+                    "AAPL,100,150.00\n"
+                    "MSFT,50,300.00\n"
+                    "SPY,200,380.00\n"
+                    "BND,500,80.00\n",
+                    language="csv",
+                )
+            with st.expander("Γλωσσάρι Χρηματοοικονομικών Όρων"):
+                explainer = Explainer()
+                for term, definition in explainer.GLOSSARY.items():
+                    st.write(f"**{term}**: {definition}")
+        else:
+            try:
+                render_overview(portfolio)
+            except Exception as e:
+                st.error(f"Σφάλμα επισκόπησης: {e}")
+                st.exception(e)
 
     with tab2:
-        try:
-            engine = st.session_state.get("scenario_engine")
-            if engine:
-                render_scenarios(portfolio, engine)
-        except Exception as e:
-            st.error(f"Σφάλμα σεναρίου: {e}")
-            st.exception(e)
+        if portfolio is None:
+            st.info("Φορτώστε χαρτοφυλάκιο για να δείτε την ανάλυση σεναρίων.")
+        else:
+            try:
+                engine = st.session_state.get("scenario_engine")
+                if engine:
+                    render_scenarios(portfolio, engine)
+            except Exception as e:
+                st.error(f"Σφάλμα σεναρίου: {e}")
+                st.exception(e)
 
     with tab3:
-        try:
-            analysis = st.session_state.get("risk_analysis")
-            if analysis:
-                render_risk(analysis)
-        except Exception as e:
-            st.error(f"Σφάλμα παρακολούθησης κινδύνου: {e}")
-            st.exception(e)
+        if portfolio is None:
+            st.info("Φορτώστε χαρτοφυλάκιο για να δείτε την παρακολούθηση κινδύνου.")
+        else:
+            try:
+                analysis = st.session_state.get("risk_analysis")
+                if analysis:
+                    render_risk(analysis)
+            except Exception as e:
+                st.error(f"Σφάλμα παρακολούθησης κινδύνου: {e}")
+                st.exception(e)
 
     with tab4:
+        if portfolio is None:
+            st.info("Φορτώστε χαρτοφυλάκιο για να δείτε τις προτάσεις.")
+        else:
+            try:
+                recs = st.session_state.get("recommendations")
+                if recs is not None:
+                    render_recommendations(recs)
+            except Exception as e:
+                st.error(f"Σφάλμα προτάσεων: {e}")
+                st.exception(e)
+
+    with tab5:
         try:
-            recs = st.session_state.get("recommendations")
-            if recs is not None:
-                render_recommendations(recs)
+            render_validation()
         except Exception as e:
-            st.error(f"Σφάλμα προτάσεων: {e}")
+            st.error(f"Σφάλμα αξιολόγησης: {e}")
             st.exception(e)
 
     st.markdown("---")
