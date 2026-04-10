@@ -82,6 +82,7 @@ def _init_state():
         "risk_profile": "moderate",
         "last_loaded": None,
         "validation_results": None,
+        "user_archetypes": [],
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1438,6 +1439,34 @@ HHI = Σ(βάρος_i²)
 # Tab 5: Πειραματική Αξιολόγηση (Experimental Validation)
 # ---------------------------------------------------------------------------
 
+def _csv_to_archetype(df: pd.DataFrame, name: str, risk_profile: str) -> dict:
+    """Convert an uploaded portfolio CSV to a validation archetype dict."""
+    df = df.copy()
+    df.columns = df.columns.str.lower().str.strip()
+    df["ticker"] = df["ticker"].str.upper().str.strip()
+    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(0)
+    df["entry_price"] = pd.to_numeric(df["entry_price"], errors="coerce").fillna(0)
+    df = df[(df["quantity"] > 0) & (df["entry_price"] > 0)]
+
+    total_value = (df["quantity"] * df["entry_price"]).sum()
+    if total_value == 0:
+        raise ValueError("Μηδενική αξία χαρτοφυλακίου.")
+
+    tickers = df["ticker"].tolist()
+    weights = [(row["quantity"] * row["entry_price"]) / total_value
+               for _, row in df.iterrows()]
+
+    safe_id = "user_" + name.lower().replace(" ", "_")[:20]
+    return {
+        "id": safe_id,
+        "label": f"★ {name}",
+        "archetype": "Δικό μου",
+        "tickers": tickers,
+        "weights": weights,
+        "risk_profile": risk_profile,
+    }
+
+
 def _val_metric_card(label: str, baseline_val, proposed_val,
                      higher_is_better: bool = True, fmt: str = ".3f"):
     """Render a side-by-side metric card: baseline vs proposed."""
@@ -1500,6 +1529,7 @@ def _plot_scatter_comparison(results: ValidationResults):
         "Μέτρια Διαφοροποίηση":   "#ffc107",
         "Καλά Διαφοροποιημένο":   "#28a745",
         "Συντηρητικό":            "#17a2b8",
+        "Δικό μου":               "#6f42c1",
     }
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
@@ -1509,9 +1539,13 @@ def _plot_scatter_comparison(results: ValidationResults):
         (ax2, p_scores, "Proposed (Digital Twin)",       "#0d6efd"),
     ]:
         for arch, score, dd in zip(archetypes, scores, drawdowns):
-            color = arch_colors.get(arch, "#888")
-            ax.scatter(score, dd, c=color, s=60, alpha=0.85,
-                       edgecolors="white", linewidths=0.5)
+            is_user = arch == "Δικό μου"
+            color  = arch_colors.get(arch, "#888")
+            marker = "*" if is_user else "o"
+            size   = 200 if is_user else 60
+            ax.scatter(score, dd, c=color, s=size, alpha=0.9,
+                       marker=marker, edgecolors="white", linewidths=0.5,
+                       zorder=5 if is_user else 3)
 
         # Trend line
         if len(scores) > 2:
@@ -1539,12 +1573,15 @@ def _plot_scatter_comparison(results: ValidationResults):
         ax.grid(True, alpha=0.3)
 
     # Legend
-    legend_patches = [
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=c,
-                   markersize=8, label=arch)
-        for arch, c in arch_colors.items()
-    ]
-    fig.legend(handles=legend_patches, loc="lower center", ncol=5,
+    legend_patches = []
+    for arch, c in arch_colors.items():
+        marker = "*" if arch == "Δικό μου" else "o"
+        ms = 12 if arch == "Δικό μου" else 8
+        legend_patches.append(
+            plt.Line2D([0], [0], marker=marker, color="w",
+                       markerfacecolor=c, markersize=ms, label=arch)
+        )
+    fig.legend(handles=legend_patches, loc="lower center", ncol=6,
                fontsize=8, frameon=True, bbox_to_anchor=(0.5, -0.05))
     fig.tight_layout(rect=[0, 0.05, 1, 1])
     return fig
@@ -1683,6 +1720,51 @@ def render_validation():
         ])
         st.dataframe(arch_df, use_container_width=True, height=350)
 
+    # ── Upload custom portfolios ───────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📂 Προσθήκη Δικών σου Χαρτοφυλακίων (Προαιρετικό)")
+    st.caption(
+        "Ανέβασε ένα ή περισσότερα CSV (ticker, quantity, entry_price) "
+        "για να συμπεριληφθούν στο πείραμα ως επιπλέον σημεία (★)."
+    )
+
+    uploaded_files = st.file_uploader(
+        "Ανέβασε CSV χαρτοφυλάκια",
+        type=["csv"],
+        accept_multiple_files=True,
+        key="val_upload",
+    )
+    up_risk = st.selectbox(
+        "Προφίλ κινδύνου για τα ανεβασμένα χαρτοφυλάκια",
+        ["conservative", "moderate", "aggressive"],
+        index=1,
+        format_func=lambda x: {"conservative": "Συντηρητικό",
+                                "moderate": "Ισορροπημένο",
+                                "aggressive": "Δυναμικό"}[x],
+        key="val_up_risk",
+    )
+
+    if uploaded_files:
+        user_archetypes = []
+        for f in uploaded_files:
+            try:
+                df_up = pd.read_csv(f)
+                arch = _csv_to_archetype(
+                    df_up,
+                    name=f.name.replace(".csv", ""),
+                    risk_profile=up_risk,
+                )
+                user_archetypes.append(arch)
+                st.success(
+                    f"✅ **{arch['label']}** — "
+                    f"{len(arch['tickers'])} tickers: {', '.join(arch['tickers'])}"
+                )
+            except Exception as e:
+                st.error(f"Σφάλμα στο {f.name}: {e}")
+        st.session_state["user_archetypes"] = user_archetypes
+    elif not st.session_state.get("user_archetypes"):
+        st.session_state["user_archetypes"] = []
+
     # ── Run controls ───────────────────────────────────────────────────────
     st.markdown("---")
     col_btn, col_info = st.columns([2, 3])
@@ -1716,7 +1798,12 @@ def render_validation():
                 status_text.text(f"[{step}/{total}] {msg}")
 
             try:
+                all_archetypes = (
+                    PORTFOLIO_ARCHETYPES
+                    + st.session_state.get("user_archetypes", [])
+                )
                 experiment = ValidationExperiment(
+                    archetypes=all_archetypes,
                     history_years=5,
                     split_fraction=0.60,
                     progress_callback=_cb,
@@ -1886,7 +1973,7 @@ def render_validation():
         st.markdown("### 📋 Αναλυτικός Πίνακας Αποτελεσμάτων")
         df = results.to_dataframe()
 
-        # Color-code the actual drawdown column
+        # Color-code the actual drawdown column + highlight user rows
         def _color_dd(val):
             if pd.isna(val):
                 return ""
@@ -1898,8 +1985,15 @@ def render_validation():
                 return "background-color: #d1ecf1; color: #0c5460"
             return "background-color: #d4edda; color: #155724"
 
+        def _highlight_user(row):
+            if row.get("Κατηγορία") == "Δικό μου":
+                return ["background-color: #f3e8ff; font-weight: bold"] * len(row)
+            return [""] * len(row)
+
         st.dataframe(
-            df.style.map(_color_dd, subset=["Πραγματικό Drawdown (%)"]),
+            df.style
+              .map(_color_dd, subset=["Πραγματικό Drawdown (%)"])
+              .apply(_highlight_user, axis=1),
             use_container_width=True,
             height=500,
         )
