@@ -1899,7 +1899,7 @@ def render_validation():
             return "background-color: #d4edda; color: #155724"
 
         st.dataframe(
-            df.style.applymap(_color_dd, subset=["Πραγματικό Drawdown (%)"]),
+            df.style.map(_color_dd, subset=["Πραγματικό Drawdown (%)"]),
             use_container_width=True,
             height=500,
         )
