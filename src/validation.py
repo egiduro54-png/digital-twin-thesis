@@ -20,15 +20,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from scipy import stats
 from sklearn.metrics import precision_recall_fscore_support
 
+from .data_loader import fetch_historical_data
 from .portfolio import Portfolio, Asset
 from .risk_monitor import RiskMonitor
 from .scenario_engine import ScenarioEngine
@@ -752,29 +751,13 @@ class ValidationExperiment:
         return sorted(tickers)
 
     def fetch_data(self) -> pd.DataFrame:
-        """Fetch price data for all tickers in one bulk call."""
+        """Fetch price data for all tickers using the project's data_loader."""
         tickers = self._all_tickers()
         self._progress(1, f"Φόρτωση δεδομένων για {len(tickers)} tickers από Yahoo Finance…")
 
-        end = datetime.now()
-        start = end - timedelta(days=int(self.history_years * 365.25))
+        # Reuse the existing fetch_historical_data which handles yfinance quirks
+        df = fetch_historical_data(tickers, years=self.history_years)
 
-        raw = yf.download(
-            tickers,
-            start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
-            auto_adjust=True,
-            progress=False,
-        )
-
-        # yfinance returns MultiIndex columns when multiple tickers
-        if isinstance(raw.columns, pd.MultiIndex):
-            df = raw["Close"]
-        else:
-            df = raw
-
-        # Keep only tickers with sufficient data (>= 1 year of trading days)
-        df = df.dropna(thresh=min(252, len(df) // 2), axis=1)
         self._progress(2, f"Δεδομένα διαθέσιμα: {df.shape[1]} tickers, {len(df)} ημέρες")
         return df
 
