@@ -83,6 +83,7 @@ def _init_state():
         "last_loaded": None,
         "validation_results": None,
         "user_archetypes": [],
+        "whatif_weights": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -131,6 +132,7 @@ def _load_portfolio(csv_path: str, risk_profile: str, name: str):
     st.session_state["portfolio_name"] = name
     st.session_state["risk_profile"] = risk_profile
     st.session_state["last_loaded"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    st.session_state["whatif_weights"] = None  # reset What-If on new portfolio load
     st.success("Το χαρτοφυλάκιο φορτώθηκε επιτυχώς!")
 
 
@@ -379,6 +381,11 @@ def render_overview(portfolio):
     if st.button("Προτείνω Ανακατανομή Κεφαλαίων"):
         _render_rebalancing_comparison(portfolio, alignment, metrics)
 
+    # --- Correlation Heatmap ---
+    st.markdown("---")
+    with st.expander("🔗 Πίνακας Συσχέτισης Τίτλων (Correlation Matrix)", expanded=False):
+        _plot_correlation_heatmap(portfolio)
+
 
 def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
     total = portfolio.total_value
@@ -454,6 +461,74 @@ def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
         "Σημείωση: Οι εκτιμήσεις Volatility/Sharpe μετά το rebalancing είναι προσεγγιστικές. "
         "Για ακριβή ανάλυση δείτε τις αναλυτικές προτάσεις στην καρτέλα Προτάσεις Αναδιάρθρωσης."
     )
+
+
+def _plot_correlation_heatmap(portfolio):
+    """Render a colour-coded correlation matrix for portfolio assets."""
+    corr = portfolio.calculate_correlation_matrix()
+    if corr.empty or corr.shape[0] < 2:
+        st.info("Χρειάζονται τουλάχιστον 2 τίτλοι με ιστορικά δεδομένα για τον πίνακα συσχέτισης.")
+        return
+
+    tickers = list(corr.columns)
+    n = len(tickers)
+    fig_size = max(5, n * 0.75)
+
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size * 0.85))
+    fig.patch.set_facecolor("#0e1117")
+    ax.set_facecolor("#0e1117")
+
+    mat = corr.values
+    im = ax.imshow(mat, cmap="RdYlGn", vmin=-1, vmax=1, aspect="auto")
+
+    # Axis labels
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(tickers, rotation=45, ha="right", color="white", fontsize=9)
+    ax.set_yticklabels(tickers, color="white", fontsize=9)
+
+    # Annotate cells with correlation value
+    for i in range(n):
+        for j in range(n):
+            val = mat[i, j]
+            text_color = "black" if abs(val) < 0.6 else "white"
+            ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                    fontsize=8, color=text_color, fontweight="bold")
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.ax.yaxis.set_tick_params(color="white")
+    plt.setp(cbar.ax.yaxis.get_ticklabels(), color="white", fontsize=8)
+
+    ax.set_title("Πίνακας Συσχέτισης (Pearson, ημερήσιες αποδόσεις)",
+                 color="white", fontsize=11, pad=12)
+    ax.tick_params(colors="white")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444")
+
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    # Interpretation guide
+    st.caption(
+        "🟢 Τιμές κοντά στο +1: ισχυρή θετική συσχέτιση (κινούνται μαζί) | "
+        "🔴 Τιμές κοντά στο -1: αντίθετη κίνηση (καλή διαφοροποίηση) | "
+        "⚪ Τιμές κοντά στο 0: ανεξάρτητη κίνηση"
+    )
+
+    # Flag highly correlated pairs
+    high_corr = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if abs(mat[i, j]) >= 0.8 and i != j:
+                high_corr.append((tickers[i], tickers[j], mat[i, j]))
+
+    if high_corr:
+        st.warning(
+            "**Υψηλή συσχέτιση** (≥ 0.80) — οι παρακάτω ζεύγοι κινούνται σχεδόν ταυτόχρονα, "
+            "μειώνοντας το όφελος διαφοροποίησης:\n"
+            + "\n".join(f"- {a} & {b}: {v:.2f}" for a, b, v in high_corr)
+        )
 
 
 def _plot_composition(composition: dict):
@@ -1687,6 +1762,237 @@ def _plot_risk_rank_comparison(results: ValidationResults):
     return fig
 
 
+def _build_whatif_portfolio(portfolio, norm_weights: dict):
+    """Return a new Portfolio with quantities scaled to match norm_weights."""
+    import copy as _copy
+    from src.portfolio import Portfolio as _P
+
+    total = portfolio.total_value
+    new_assets = []
+    for asset in portfolio.assets:
+        new_asset = _copy.copy(asset)
+        target_value = norm_weights.get(asset.ticker, 0.0) * total
+        new_asset.quantity = (target_value / asset.current_price
+                              if asset.current_price > 0 else asset.quantity)
+        new_assets.append(new_asset)
+
+    return _P(
+        assets=new_assets,
+        historical_prices=portfolio.historical_prices,
+        risk_profile=portfolio.risk_profile,
+        name="What-If",
+    )
+
+
+def _whatif_metric_row(label: str, orig, whatif, fmt=None, lower_is_better=False):
+    """Render a 3-column comparison row: label | original | what-if (with delta)."""
+    if fmt is None:
+        fmt = lambda v: f"{v:.2f}" if v is not None else "N/A"
+
+    col_label, col_orig, col_whatif = st.columns([2, 1.5, 1.5])
+    col_label.markdown(f"**{label}**")
+    col_orig.markdown(f"`{fmt(orig)}`")
+
+    if orig is not None and whatif is not None:
+        delta = whatif - orig
+        improved = (delta < 0) if lower_is_better else (delta > 0)
+        arrow = "▲" if delta > 0 else "▼"
+        color = "#28a745" if improved else "#dc3545"
+        col_whatif.markdown(
+            f"`{fmt(whatif)}` <span style='color:{color};font-size:0.85rem'>"
+            f"{arrow} {fmt(abs(delta))}</span>",
+            unsafe_allow_html=True,
+        )
+    else:
+        col_whatif.markdown(f"`{fmt(whatif)}`")
+
+
+def render_whatif(portfolio):
+    """Tab 6: What-If Editor — ο χρήστης αλλάζει βάρη και βλέπει live μετρικές."""
+    st.subheader("🎯 What-If Editor — Προσομοίωση Αλλαγής Κατανομής")
+    st.markdown(
+        "Χρησιμοποιήστε τα sliders για να **αλλάξετε τα βάρη** των τίτλων του χαρτοφυλακίου "
+        "και δείτε πώς επηρεάζονται οι μετρικές κινδύνου *πριν* κάνετε οποιαδήποτε αλλαγή."
+    )
+
+    tickers = [a.ticker for a in portfolio.assets]
+    current_weights = portfolio.get_weights_dict()  # {ticker: fraction}
+
+    # --- Sliders section ---
+    st.markdown("#### Προσαρμογή Βαρών (%)")
+    st.caption("Τα βάρη κανονικοποιούνται αυτόματα ώστε το άθροισμα να είναι 100%.")
+
+    slider_cols = st.columns(min(len(tickers), 4))
+    raw_weights = {}
+    for idx, ticker in enumerate(tickers):
+        col = slider_cols[idx % len(slider_cols)]
+        default_pct = round(current_weights.get(ticker, 0.0) * 100, 1)
+        raw_weights[ticker] = col.slider(
+            ticker,
+            min_value=0.0,
+            max_value=100.0,
+            value=default_pct,
+            step=0.5,
+            key=f"whatif_slider_{ticker}",
+        )
+
+    total_raw = sum(raw_weights.values())
+    # Normalize
+    if total_raw > 0:
+        norm_weights = {t: w / total_raw for t, w in raw_weights.items()}
+    else:
+        norm_weights = {t: 1.0 / len(tickers) for t in tickers}
+
+    # Show weight summary
+    weight_rows = []
+    for ticker in tickers:
+        weight_rows.append({
+            "Ticker": ticker,
+            "Τρέχον %": f"{current_weights.get(ticker, 0)*100:.1f}%",
+            "What-If %": f"{norm_weights[ticker]*100:.1f}%",
+            "Αλλαγή": f"{(norm_weights[ticker] - current_weights.get(ticker,0))*100:+.1f}%",
+        })
+    st.dataframe(pd.DataFrame(weight_rows), use_container_width=True, hide_index=True)
+
+    if st.button("▶ Εφαρμογή What-If & Ανάλυση", type="primary"):
+        st.session_state["whatif_weights"] = norm_weights
+
+    # --- Results section ---
+    if not st.session_state.get("whatif_weights"):
+        st.info("Πατήστε **Εφαρμογή What-If & Ανάλυση** για να δείτε αποτελέσματα.")
+        return
+
+    stored_weights = st.session_state["whatif_weights"]
+
+    with st.spinner("Υπολογισμός What-If χαρτοφυλακίου…"):
+        whatif_p = _build_whatif_portfolio(portfolio, stored_weights)
+        orig_metrics = portfolio.get_metrics()
+        whatif_metrics = whatif_p.get_metrics()
+        orig_monitor = RiskMonitor(portfolio)
+        whatif_monitor = RiskMonitor(whatif_p)
+        orig_analysis = orig_monitor.run_full_analysis()
+        whatif_analysis = whatif_monitor.run_full_analysis()
+
+    st.markdown("---")
+    st.markdown("#### 📊 Σύγκριση Μετρικών: Τρέχον vs What-If")
+
+    hdr1, hdr2, hdr3 = st.columns([2, 1.5, 1.5])
+    hdr1.markdown("**Μετρική**")
+    hdr2.markdown("**Τρέχον**")
+    hdr3.markdown("**What-If**")
+    st.markdown("---")
+
+    pct_fmt = lambda v: f"{v:.2f}%" if v is not None else "N/A"
+    ratio_fmt = lambda v: f"{v:.3f}" if v is not None else "N/A"
+
+    _whatif_metric_row(
+        "Ετήσια Μεταβλητότητα (Volatility)",
+        orig_metrics.get("volatility_annual_pct"),
+        whatif_metrics.get("volatility_annual_pct"),
+        fmt=pct_fmt,
+        lower_is_better=True,
+    )
+    _whatif_metric_row(
+        "Δείκτης Sharpe",
+        orig_metrics.get("sharpe_ratio"),
+        whatif_metrics.get("sharpe_ratio"),
+        fmt=ratio_fmt,
+        lower_is_better=False,
+    )
+    _whatif_metric_row(
+        "Beta",
+        orig_metrics.get("beta"),
+        whatif_metrics.get("beta"),
+        fmt=ratio_fmt,
+        lower_is_better=True,
+    )
+    _whatif_metric_row(
+        "Max Drawdown",
+        orig_metrics.get("max_drawdown_pct"),
+        whatif_metrics.get("max_drawdown_pct"),
+        fmt=pct_fmt,
+        lower_is_better=True,
+    )
+    _whatif_metric_row(
+        "VaR 95% (μηνιαίο)",
+        orig_metrics.get("var_95_monthly_pct"),
+        whatif_metrics.get("var_95_monthly_pct"),
+        fmt=pct_fmt,
+        lower_is_better=True,
+    )
+    _whatif_metric_row(
+        "Δείκτης Διαφοροποίησης",
+        orig_metrics.get("diversification_ratio"),
+        whatif_metrics.get("diversification_ratio"),
+        fmt=ratio_fmt,
+        lower_is_better=False,
+    )
+    _whatif_metric_row(
+        "Αναμενόμενη Ετήσια Απόδοση",
+        orig_metrics.get("expected_annual_return_pct"),
+        whatif_metrics.get("expected_annual_return_pct"),
+        fmt=pct_fmt,
+        lower_is_better=False,
+    )
+
+    # --- Alerts comparison ---
+    st.markdown("---")
+    st.markdown("#### ⚠️ Σύγκριση Alerts RiskMonitor")
+
+    orig_alerts = orig_analysis.get("all", [])
+    whatif_alerts = whatif_analysis.get("all", [])
+
+    orig_summary = orig_analysis.get("summary", {})
+    whatif_summary = whatif_analysis.get("summary", {})
+
+    a1, a2 = st.columns(2)
+    with a1:
+        st.markdown("**Τρέχον χαρτοφυλάκιο**")
+        for sev, emoji in [("alert", "🔴"), ("caution", "🟡"), ("ok", "🟢")]:
+            cnt = orig_summary.get(sev, 0)
+            if cnt:
+                st.write(f"{emoji} {sev.capitalize()}: **{cnt}**")
+
+    with a2:
+        st.markdown("**What-If χαρτοφυλάκιο**")
+        for sev, emoji in [("alert", "🔴"), ("caution", "🟡"), ("ok", "🟢")]:
+            cnt = whatif_summary.get(sev, 0)
+            if cnt:
+                st.write(f"{emoji} {sev.capitalize()}: **{cnt}**")
+
+    # New alerts introduced (compare the "alert" severity lists)
+    orig_alert_list = orig_analysis.get("alert", [])
+    whatif_alert_list = whatif_analysis.get("alert", [])
+    orig_alert_names = {a.get("title", a.get("category", "")) for a in orig_alert_list}
+    whatif_alert_names = {a.get("title", a.get("category", "")) for a in whatif_alert_list}
+    new_alerts = whatif_alert_names - orig_alert_names
+    resolved_alerts = orig_alert_names - whatif_alert_names
+
+    if new_alerts:
+        st.error(f"🆕 Νέα προβλήματα στο What-If: **{', '.join(new_alerts)}**")
+    if resolved_alerts:
+        st.success(f"✅ Επιλύθηκαν στο What-If: **{', '.join(resolved_alerts)}**")
+    if not new_alerts and not resolved_alerts:
+        st.info("Δεν υπάρχουν αλλαγές στα κρίσιμα alerts μεταξύ των δύο χαρτοφυλακίων.")
+
+    # Detailed what-if alerts
+    with st.expander("Αναλυτικά alerts What-If χαρτοφυλακίου"):
+        if whatif_alerts:
+            for alert in whatif_alerts:
+                sev = alert.get("severity", "ok")
+                emoji = "🔴" if sev == "alert" else "🟡" if sev == "caution" else "🟢"
+                title = alert.get("title", alert.get("category", ""))
+                desc = alert.get("description", alert.get("message", ""))
+                st.write(f"{emoji} **{title}**: {desc}")
+        else:
+            st.success("Κανένα alert — το What-If χαρτοφυλάκιο φαίνεται υγιές.")
+
+    st.caption(
+        "▲ πράσινο = βελτίωση | ▼ κόκκινο = επιδείνωση | "
+        "Οι υπολογισμοί βασίζονται στα ιστορικά δεδομένα του φορτωμένου χαρτοφυλακίου."
+    )
+
+
 def render_validation():
     """Tab 5: Πειραματική Αξιολόγηση — Σύγκριση Baseline vs Digital Twin."""
     st.subheader("🔬 Πειραματική Αξιολόγηση Συστήματος")
@@ -2051,12 +2357,13 @@ def main():
     portfolio = st.session_state.get("portfolio")
 
     # Tab 5 (Πειραματική Αξιολόγηση) is always available, independent of portfolio
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📈 Επισκόπηση Χαρτοφυλακίου",
         "🔀 Ανάλυση Σεναρίων",
         "⚠️ Παρακολούθηση Κινδύνου",
         "💡 Προτάσεις Αναδιάρθρωσης",
         "🔬 Πειραματική Αξιολόγηση",
+        "🎯 What-If Editor",
     ])
 
     with tab1:
@@ -2127,6 +2434,16 @@ def main():
         except Exception as e:
             st.error(f"Σφάλμα αξιολόγησης: {e}")
             st.exception(e)
+
+    with tab6:
+        if portfolio is None:
+            st.info("Φορτώστε χαρτοφυλάκιο από το πλαϊνό μενού για να χρησιμοποιήσετε το What-If Editor.")
+        else:
+            try:
+                render_whatif(portfolio)
+            except Exception as e:
+                st.error(f"Σφάλμα What-If Editor: {e}")
+                st.exception(e)
 
     st.markdown("---")
     st.caption(
