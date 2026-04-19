@@ -56,6 +56,12 @@ SAMPLE_PORTFOLIOS = {
 }
 
 RISK_PROFILE_LABELS = {
+    "liquidity_plus": "Liquidity Plus (Πολύ Χαμηλός)",
+    "defensive":      "Defensive (Χαμηλός)",
+    "flexible":       "Flexible (Μέτριος)",
+    "growth":         "Growth (Υψηλός)",
+    "dynamic":        "Dynamic (Πολύ Υψηλός)",
+    # legacy
     "conservative": "Συντηρητικό",
     "moderate": "Ισορροπημένο",
     "aggressive": "Δυναμικό",
@@ -149,9 +155,9 @@ def render_sidebar():
 
     risk_profile = st.sidebar.selectbox(
         "Προφίλ κινδύνου επενδυτή",
-        ["conservative", "moderate", "aggressive"],
+        ["liquidity_plus", "defensive", "flexible", "growth", "dynamic"],
         format_func=lambda x: RISK_PROFILE_LABELS[x],
-        index=1,
+        index=2,
     )
 
     if source == "Δείγμα χαρτοφυλακίου":
@@ -342,21 +348,41 @@ def render_overview(portfolio):
     st.markdown("---")
     st.subheader("Αναλυτικοί Δείκτες")
 
-    m1, m2 = st.columns(2)
+    # --- Period Returns ---
+    period_rets = portfolio.calculate_period_returns()
+    if period_rets:
+        st.markdown("**Αποδόσεις ανά Περίοδο (Period Returns)**")
+        pr1, pr2, pr3, pr4, pr5 = st.columns(5)
+        def _pr(val):
+            if val is None:
+                return "N/A"
+            return f"{val:+.2f}%"
+        pr1.metric("MTD",  _pr(period_rets.get("mtd_pct")))
+        pr2.metric("YTD",  _pr(period_rets.get("ytd_pct")))
+        pr3.metric("1 Έτος",  _pr(period_rets.get("1y_pct")))
+        pr4.metric("3 Έτη", _pr(period_rets.get("3y_pct")))
+        pr5.metric("5 Έτη", _pr(period_rets.get("5y_pct")))
+        st.markdown("---")
+
+    m1, m2, m3 = st.columns(3)
     with m1:
         st.markdown("**Απόδοση (Performance)**")
         st.write(f"- Συνολική αξία: {format_currency(metrics['total_value'])}")
         st.write(f"- Κόστος κτήσης: {format_currency(metrics['total_cost'])}")
         st.write(f"- Αποτίμηση P&L: {format_pct(metrics['total_return_pct'], show_sign=True)}")
         st.write(f"- Αναμενόμενη ετήσια απόδοση: {format_pct(metrics.get('expected_annual_return_pct', 0), show_sign=True)}")
-        st.write(f"- Δείκτης Sharpe: {format_ratio(metrics.get('sharpe_ratio'))}")
     with m2:
+        st.markdown("**Risk-Adjusted Returns**")
+        st.write(f"- Sharpe Ratio: {format_ratio(metrics.get('sharpe_ratio'))}")
+        st.write(f"- Sortino Ratio: {format_ratio(metrics.get('sortino_ratio'))}")
+        st.write(f"- Treynor Ratio: {format_ratio(metrics.get('treynor_ratio'))}")
+    with m3:
         st.markdown("**Κίνδυνος (Risk)**")
-        st.write(f"- Ετήσια μεταβλητότητα (Volatility): {format_pct(vol)} (στόχος: {format_pct(tgt_vol)})")
+        st.write(f"- Ετήσια Volatility: {format_pct(vol)} (στόχος: {format_pct(tgt_vol)})")
         st.write(f"- Beta: {format_ratio(metrics.get('beta'))}")
-        st.write(f"- Μέγιστη απώλεια (Max Drawdown): {format_pct(metrics.get('max_drawdown_pct'), show_sign=True)}")
+        st.write(f"- Max Drawdown: {format_pct(metrics.get('max_drawdown_pct'), show_sign=True)}")
         st.write(f"- VaR 95% (μηνιαίο): {format_pct(metrics.get('var_95_monthly_pct'), show_sign=True)}")
-        st.write(f"- Δείκτης διαφοροποίησης (Diversification Ratio): {format_ratio(metrics.get('diversification_ratio'))}")
+        st.write(f"- Diversification Ratio: {format_ratio(metrics.get('diversification_ratio'))}")
 
     alignment = portfolio.get_risk_profile_alignment()
     st.subheader("Εναρμόνιση με Προφίλ Κινδύνου")
@@ -649,11 +675,12 @@ def _render_scenario_result(comparison: dict, engine: ScenarioEngine, scenario_i
         delta=format_pct(port_chg, show_sign=True),
         delta_color="normal" if port_chg >= 0 else "inverse",
     )
-    resilience_label = "έναντι αγοράς" if params["market_change_pct"] != 0 else ""
+    resilience_label = "vs Market" if params["market_change_pct"] != 0 else ""
     rc3.metric(
-        "Ανθεκτικότητα (Resilience)",
+        "Relative Performance vs Market",
         format_pct(resilience, show_sign=True) + f" {resilience_label}",
-        help="Θετικό = το χαρτοφυλάκιο χάνει λιγότερο από την αγορά (καλή ανθεκτικότητα).",
+        help="Θετικό = outperformance έναντι αγοράς (portfolio return − market return). "
+             "Αντικατοπτρίζει το όφελος διαφοροποίησης (alpha vs benchmark).",
     )
 
     st.subheader("Σύγκριση Δεικτών")

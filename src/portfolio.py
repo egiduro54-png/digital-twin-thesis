@@ -93,15 +93,27 @@ class Portfolio:
         True when this object represents a scenario simulation (not live).
     """
 
-    # Target volatility by investor risk profile
+    # Target volatility by investor risk profile (GR Advisory CIO Model Portfolios)
     TARGET_VOLATILITY = {
-        "conservative": 0.07,
-        "moderate": 0.12,
-        "aggressive": 0.18,
+        "liquidity_plus": 0.03,
+        "defensive":      0.06,
+        "flexible":       0.10,
+        "growth":         0.14,
+        "dynamic":        0.20,
+        # legacy aliases
+        "conservative": 0.06,
+        "moderate":     0.10,
+        "aggressive":   0.20,
     }
 
     # Target stock/bond split by profile
     TARGET_ALLOCATION = {
+        "liquidity_plus": {"equity": 0.05,  "fixed_income": 0.90, "other": 0.05},
+        "defensive":      {"equity": 0.25,  "fixed_income": 0.65, "other": 0.10},
+        "flexible":       {"equity": 0.50,  "fixed_income": 0.40, "other": 0.10},
+        "growth":         {"equity": 0.70,  "fixed_income": 0.20, "other": 0.10},
+        "dynamic":        {"equity": 0.90,  "fixed_income": 0.05, "other": 0.05},
+        # legacy aliases
         "conservative": {"equity": 0.30, "fixed_income": 0.60, "other": 0.10},
         "moderate":     {"equity": 0.60, "fixed_income": 0.35, "other": 0.05},
         "aggressive":   {"equity": 0.80, "fixed_income": 0.15, "other": 0.05},
@@ -282,6 +294,63 @@ class Portfolio:
         var_monthly = var_daily * np.sqrt(21)
         return var_monthly
 
+    def calculate_sortino_ratio(self) -> float:
+        """Sortino ratio = (portfolio_return - risk_free_rate) / downside_deviation."""
+        daily_ret = self.get_portfolio_daily_returns()
+        if daily_ret.empty or len(daily_ret) < 20:
+            return float("nan")
+        ret = self.calculate_expected_annual_return()
+        if np.isnan(ret):
+            return float("nan")
+        downside = daily_ret[daily_ret < 0]
+        if len(downside) < 5:
+            return float("nan")
+        downside_dev = float(downside.std() * np.sqrt(TRADING_DAYS))
+        if downside_dev == 0:
+            return float("nan")
+        return (ret - RISK_FREE_RATE) / downside_dev
+
+    def calculate_treynor_ratio(self) -> float:
+        """Treynor ratio = (portfolio_return - risk_free_rate) / beta."""
+        ret = self.calculate_expected_annual_return()
+        beta = self.calculate_beta()
+        if np.isnan(ret) or np.isnan(beta) or beta == 0:
+            return float("nan")
+        return (ret - RISK_FREE_RATE) / beta
+
+    def calculate_period_returns(self) -> dict:
+        """Returns for standard periods: MTD, YTD, 1Y, 3Y, 5Y."""
+        daily_ret = self.get_portfolio_daily_returns()
+        if daily_ret.empty:
+            return {}
+
+        today = daily_ret.index[-1]
+        cum = (1 + daily_ret).cumprod()
+
+        def _ret_since(start_date):
+            subset = cum[cum.index >= start_date]
+            if subset.empty:
+                return None
+            start_val = cum[cum.index < start_date]
+            if start_val.empty:
+                return None
+            return float((subset.iloc[-1] / start_val.iloc[-1] - 1) * 100)
+
+        import datetime as _dt
+        mtd_start = today.replace(day=1)
+        ytd_start = today.replace(month=1, day=1)
+        y1_start  = today - _dt.timedelta(days=365)
+        y3_start  = today - _dt.timedelta(days=365*3)
+        y5_start  = today - _dt.timedelta(days=365*5)
+
+        return {
+            "mtd_pct":  _ret_since(mtd_start),
+            "ytd_pct":  _ret_since(ytd_start),
+            "1y_pct":   _ret_since(y1_start),
+            "3y_pct":   _ret_since(y3_start),
+            "5y_pct":   _ret_since(y5_start),
+        }
+
     def calculate_diversification_ratio(self) -> float:
         """
         Diversification ratio = weighted-avg individual volatilities / portfolio volatility.
@@ -421,6 +490,8 @@ class Portfolio:
             "volatility_deviation_pct": round(
                 (vol - target_vol) * 100, 2) if not np.isnan(vol) else None,
             "sharpe_ratio": round(self.calculate_sharpe_ratio(), 3),
+            "sortino_ratio": round(self.calculate_sortino_ratio(), 3),
+            "treynor_ratio": round(self.calculate_treynor_ratio(), 4),
             "beta": round(self.calculate_beta(), 3),
             "max_drawdown_pct": round(self.calculate_max_drawdown() * 100, 2),
             "var_95_monthly_pct": round(self.calculate_var(0.95) * 100, 2),
