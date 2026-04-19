@@ -93,7 +93,7 @@ class Portfolio:
         True when this object represents a scenario simulation (not live).
     """
 
-    # Target volatility — source: Eurobank GR Advisory slide 10 (5yr historic volatility)
+    # Target volatility by risk profile (5yr historic volatility)
     TARGET_VOLATILITY = {
         "liquidity_plus": 0.02,
         "defensive":      0.04,
@@ -106,7 +106,7 @@ class Portfolio:
         "aggressive":   0.14,
     }
 
-    # Strategy weights — source: Eurobank GR Advisory slide 9
+    # Strategy weights per risk profile
     TARGET_ALLOCATION = {
         "liquidity_plus": {"equity": 0.05, "fixed_income": 0.60, "other": 0.35},
         "defensive":      {"equity": 0.25, "fixed_income": 0.55, "other": 0.20},
@@ -120,7 +120,7 @@ class Portfolio:
     }
 
     # Benchmark tickers per profile (MSCI ACWI + Bloomberg Euro Aggregate proxy)
-    # Source: Eurobank GR Advisory slide 10 disclaimer
+    # Benchmark tickers: MSCI ACWI (equity) + Bloomberg Aggregate proxy (AGG)
     BENCHMARK_WEIGHTS = {
         "liquidity_plus": {"ACWI": 0.05, "AGG": 0.60, "cash": 0.35},
         "defensive":      {"ACWI": 0.25, "AGG": 0.55, "cash": 0.20},
@@ -340,7 +340,7 @@ class Portfolio:
         Information Ratio = (Portfolio Return - Benchmark Return) / Tracking Error
 
         Benchmark: blended ACWI + AGG per profile weights
-        Source: Eurobank GR Advisory (MSCI ACWI + Bloomberg Euro Aggregate)
+        Benchmark: MSCI ACWI + Bloomberg Euro Aggregate proxy (AGG)
         """
         import yfinance as yf
 

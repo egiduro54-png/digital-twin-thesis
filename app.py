@@ -1108,9 +1108,8 @@ GLD,40,185.00
 | QQQ | Invesco NASDAQ-100 ETF | Equity ETF |
 | BND | Vanguard Total Bond Market ETF | Fixed Income |
 
-**Προφίλ κινδύνου επενδυτή (GR Advisory CIO Model Portfolios):**
-Επέλεξε ένα από τα 5 προφίλ — εναρμονισμένα με τα επίσημα Eurobank GR Advisory Model Portfolios.
-Επηρεάζουν τους στόχους μεταβλητότητας, τα όρια alerts, τις προτάσεις rebalancing και τον υπολογισμό του Information Ratio:
+**Προφίλ κινδύνου επενδυτή:**
+Επέλεξε ένα από τα 5 προφίλ — επηρεάζουν τους στόχους μεταβλητότητας, τα όρια alerts, τις προτάσεις rebalancing και τον υπολογισμό του Information Ratio:
 
 | Προφίλ | Στόχος Volatility | Μετοχές | Ομόλογα | Cash |
 |---|---|---|---|---|
@@ -1229,7 +1228,7 @@ GLD,40,185.00
 | Treynor Ratio | (Απόδοση − Rf) / Beta | > 0.10 |
 | Information Ratio | Active Return / Tracking Error vs benchmark | > 0.5 |
 
-Benchmark για Information Ratio: MSCI ACWI + Bloomberg Aggregate, blended ανά profile weights (Eurobank GR Advisory).
+Benchmark για Information Ratio: MSCI ACWI + Bloomberg Aggregate, blended ανά profile weights.
 
 ---
 
