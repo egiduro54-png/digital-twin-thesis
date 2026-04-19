@@ -1066,11 +1066,47 @@ GLD,40,185.00
 
 **Τα 3 δείγματα χαρτοφυλακίων:**
 
-| Χαρτοφυλάκιο | Τίτλοι | Χαρακτήρας |
+**🟢 Συντηρητικό (Εισόδημα)** — Defensive / Liquidity Plus profile
+| Ticker | Περιγραφή | Κατηγορία |
 |---|---|---|
-| Συντηρητικό (Εισόδημα) | SPY, BND, TLT, VIG, JNJ, PG, KO, VYM, VXUS, GLD | Έμφαση σε ομόλογα, μερίσματα, χρυσό |
-| Ισορροπημένο (Μέτριο) | AAPL, MSFT, GOOGL, JPM, JNJ, SPY, BND, VXUS, GLD, VNQ | Ισορροπία μετοχών/ομολόγων |
-| Δυναμικό (Επιθετικό) | AAPL, MSFT, GOOGL, TSLA, NVDA, META, AMZN, SPY, QQQ, BND | Έμφαση σε tech, υψηλή ανάπτυξη |
+| SPY | S&P 500 ETF (iShares) | Equity ETF |
+| BND | Vanguard Total Bond Market ETF | Fixed Income |
+| TLT | iShares 20+ Year Treasury Bond ETF | Fixed Income |
+| VIG | Vanguard Dividend Appreciation ETF | Equity ETF |
+| JNJ | Johnson & Johnson | Healthcare |
+| PG | Procter & Gamble | Consumer Staples |
+| KO | Coca-Cola | Consumer Staples |
+| VYM | Vanguard High Dividend Yield ETF | Equity ETF |
+| VXUS | Vanguard Total International Stock ETF | International Equity |
+| GLD | SPDR Gold Shares | Commodity |
+
+**🟡 Ισορροπημένο (Μέτριο)** — Flexible profile
+| Ticker | Περιγραφή | Κατηγορία |
+|---|---|---|
+| AAPL | Apple Inc. | Technology |
+| MSFT | Microsoft Corp. | Technology |
+| GOOGL | Alphabet (Google) | Technology |
+| JPM | JPMorgan Chase | Financials |
+| JNJ | Johnson & Johnson | Healthcare |
+| SPY | S&P 500 ETF | Equity ETF |
+| BND | Vanguard Total Bond Market ETF | Fixed Income |
+| VXUS | Vanguard Total International Stock ETF | International Equity |
+| GLD | SPDR Gold Shares | Commodity |
+| VNQ | Vanguard Real Estate ETF | Real Estate |
+
+**🔴 Δυναμικό (Επιθετικό)** — Growth / Dynamic profile
+| Ticker | Περιγραφή | Κατηγορία |
+|---|---|---|
+| AAPL | Apple Inc. | Technology |
+| MSFT | Microsoft Corp. | Technology |
+| GOOGL | Alphabet (Google) | Technology |
+| TSLA | Tesla Inc. | Consumer Discretionary |
+| NVDA | NVIDIA Corp. | Technology |
+| META | Meta Platforms | Technology |
+| AMZN | Amazon.com | Consumer Discretionary |
+| SPY | S&P 500 ETF | Equity ETF |
+| QQQ | Invesco NASDAQ-100 ETF | Equity ETF |
+| BND | Vanguard Total Bond Market ETF | Fixed Income |
 
 **Προφίλ κινδύνου επενδυτή (GR Advisory CIO Model Portfolios):**
 Επέλεξε ένα από τα 5 προφίλ — εναρμονισμένα με τα επίσημα Eurobank GR Advisory Model Portfolios.
