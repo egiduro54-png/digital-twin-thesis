@@ -390,7 +390,9 @@ def render_overview(portfolio):
         st.write(f"- Treynor Ratio: {format_ratio(metrics.get('treynor_ratio'))}")
     with m3:
         st.markdown("**Κίνδυνος (Risk)**")
-        st.write(f"- Ετήσια Volatility: {format_pct(vol)} (στόχος: {format_pct(tgt_vol)})")
+        vol_3y = metrics.get("volatility_3y_pct")
+        st.write(f"- Volatility 1Y: {format_pct(vol)} (στόχος: {format_pct(tgt_vol)})")
+        st.write(f"- Volatility 3Y: {format_pct(vol_3y) if vol_3y else 'N/A'}")
         st.write(f"- Beta: {format_ratio(metrics.get('beta'))}")
         st.write(f"- Max Drawdown: {format_pct(metrics.get('max_drawdown_pct'), show_sign=True)}")
         st.write(f"- VaR 95% (μηνιαίο): {format_pct(metrics.get('var_95_monthly_pct'), show_sign=True)}")

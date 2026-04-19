@@ -211,12 +211,16 @@ class Portfolio:
     # Core Financial Metrics
     # ------------------------------------------------------------------
 
-    def calculate_volatility(self) -> float:
-        """Annualised portfolio volatility (standard deviation of returns)."""
+    def calculate_volatility(self, years: int = 1) -> float:
+        """Annualised portfolio volatility for the last `years` years."""
         daily_ret = self.get_portfolio_daily_returns()
         if daily_ret.empty or len(daily_ret) < 20:
             return float("nan")
-        return float(daily_ret.std() * np.sqrt(TRADING_DAYS))
+        cutoff = daily_ret.index[-1] - pd.DateOffset(years=years)
+        subset = daily_ret[daily_ret.index >= cutoff]
+        if len(subset) < 20:
+            return float("nan")
+        return float(subset.std() * np.sqrt(TRADING_DAYS))
 
     def calculate_expected_annual_return(self) -> float:
         """Annualised expected return based on historical mean daily return."""
@@ -476,7 +480,8 @@ class Portfolio:
         if self._metrics is not None:
             return self._metrics
 
-        vol = self.calculate_volatility()
+        vol = self.calculate_volatility(years=1)
+        vol_3y = self.calculate_volatility(years=3)
         target_vol = self.TARGET_VOLATILITY.get(self.risk_profile, 0.12)
 
         self._metrics = {
@@ -486,6 +491,7 @@ class Portfolio:
             "expected_annual_return_pct": round(
                 self.calculate_expected_annual_return() * 100, 2),
             "volatility_annual_pct": round(vol * 100, 2) if not np.isnan(vol) else None,
+            "volatility_3y_pct": round(vol_3y * 100, 2) if not np.isnan(vol_3y) else None,
             "target_volatility_pct": round(target_vol * 100, 2),
             "volatility_deviation_pct": round(
                 (vol - target_vol) * 100, 2) if not np.isnan(vol) else None,
