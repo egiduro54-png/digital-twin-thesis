@@ -93,30 +93,43 @@ class Portfolio:
         True when this object represents a scenario simulation (not live).
     """
 
-    # Target volatility by investor risk profile (GR Advisory CIO Model Portfolios)
+    # Target volatility — source: Eurobank GR Advisory slide 10 (5yr historic volatility)
     TARGET_VOLATILITY = {
-        "liquidity_plus": 0.03,
-        "defensive":      0.06,
-        "flexible":       0.10,
-        "growth":         0.14,
-        "dynamic":        0.20,
+        "liquidity_plus": 0.02,
+        "defensive":      0.04,
+        "flexible":       0.07,
+        "growth":         0.10,
+        "dynamic":        0.14,
         # legacy aliases
-        "conservative": 0.06,
-        "moderate":     0.10,
-        "aggressive":   0.20,
+        "conservative": 0.04,
+        "moderate":     0.07,
+        "aggressive":   0.14,
     }
 
-    # Target stock/bond split by profile
+    # Strategy weights — source: Eurobank GR Advisory slide 9
     TARGET_ALLOCATION = {
-        "liquidity_plus": {"equity": 0.05,  "fixed_income": 0.90, "other": 0.05},
-        "defensive":      {"equity": 0.25,  "fixed_income": 0.65, "other": 0.10},
-        "flexible":       {"equity": 0.50,  "fixed_income": 0.40, "other": 0.10},
-        "growth":         {"equity": 0.70,  "fixed_income": 0.20, "other": 0.10},
-        "dynamic":        {"equity": 0.90,  "fixed_income": 0.05, "other": 0.05},
+        "liquidity_plus": {"equity": 0.05, "fixed_income": 0.60, "other": 0.35},
+        "defensive":      {"equity": 0.25, "fixed_income": 0.55, "other": 0.20},
+        "flexible":       {"equity": 0.45, "fixed_income": 0.45, "other": 0.10},
+        "growth":         {"equity": 0.65, "fixed_income": 0.30, "other": 0.05},
+        "dynamic":        {"equity": 0.85, "fixed_income": 0.10, "other": 0.05},
         # legacy aliases
-        "conservative": {"equity": 0.30, "fixed_income": 0.60, "other": 0.10},
-        "moderate":     {"equity": 0.60, "fixed_income": 0.35, "other": 0.05},
-        "aggressive":   {"equity": 0.80, "fixed_income": 0.15, "other": 0.05},
+        "conservative": {"equity": 0.25, "fixed_income": 0.55, "other": 0.20},
+        "moderate":     {"equity": 0.45, "fixed_income": 0.45, "other": 0.10},
+        "aggressive":   {"equity": 0.85, "fixed_income": 0.10, "other": 0.05},
+    }
+
+    # Benchmark tickers per profile (MSCI ACWI + Bloomberg Euro Aggregate proxy)
+    # Source: Eurobank GR Advisory slide 10 disclaimer
+    BENCHMARK_WEIGHTS = {
+        "liquidity_plus": {"ACWI": 0.05, "AGG": 0.60, "cash": 0.35},
+        "defensive":      {"ACWI": 0.25, "AGG": 0.55, "cash": 0.20},
+        "flexible":       {"ACWI": 0.45, "AGG": 0.45, "cash": 0.10},
+        "growth":         {"ACWI": 0.65, "AGG": 0.30, "cash": 0.05},
+        "dynamic":        {"ACWI": 0.85, "AGG": 0.10, "cash": 0.05},
+        "conservative":   {"ACWI": 0.25, "AGG": 0.55, "cash": 0.20},
+        "moderate":       {"ACWI": 0.45, "AGG": 0.45, "cash": 0.10},
+        "aggressive":     {"ACWI": 0.85, "AGG": 0.10, "cash": 0.05},
     }
 
     def __init__(
@@ -322,6 +335,49 @@ class Portfolio:
             return float("nan")
         return (ret - RISK_FREE_RATE) / beta
 
+    def calculate_information_ratio(self) -> float:
+        """
+        Information Ratio = (Portfolio Return - Benchmark Return) / Tracking Error
+
+        Benchmark: blended ACWI + AGG per profile weights
+        Source: Eurobank GR Advisory (MSCI ACWI + Bloomberg Euro Aggregate)
+        """
+        daily_ret = self.get_portfolio_daily_returns()
+        if daily_ret.empty or len(daily_ret) < 20:
+            return float("nan")
+
+        bw = self.BENCHMARK_WEIGHTS.get(self.risk_profile, {})
+        acwi_w = bw.get("ACWI", 0.5)
+        agg_w  = bw.get("AGG",  0.5)
+
+        bench_parts = []
+        for ticker, weight in [("ACWI", acwi_w), ("AGG", agg_w)]:
+            if ticker in self.historical_prices.columns:
+                prices = self.historical_prices[ticker]
+                ret = np.log(prices / prices.shift(1)).dropna()
+                common = daily_ret.index.intersection(ret.index)
+                if len(common) > 20:
+                    bench_parts.append(ret.loc[common] * weight)
+
+        if not bench_parts:
+            return float("nan")
+
+        bench_ret = bench_parts[0]
+        for part in bench_parts[1:]:
+            bench_ret = bench_ret.add(part, fill_value=0)
+
+        common_idx = daily_ret.index.intersection(bench_ret.index)
+        if len(common_idx) < 20:
+            return float("nan")
+
+        active_return = daily_ret.loc[common_idx] - bench_ret.loc[common_idx]
+        tracking_error = float(active_return.std() * np.sqrt(TRADING_DAYS))
+        if tracking_error == 0:
+            return float("nan")
+
+        ann_active = float(active_return.mean() * TRADING_DAYS)
+        return ann_active / tracking_error
+
     def calculate_period_returns(self) -> dict:
         """Returns for standard periods: MTD, YTD, 1Y, 3Y, 5Y."""
         daily_ret = self.get_portfolio_daily_returns()
@@ -498,6 +554,7 @@ class Portfolio:
             "sharpe_ratio": round(self.calculate_sharpe_ratio(), 3),
             "sortino_ratio": round(self.calculate_sortino_ratio(), 3),
             "treynor_ratio": round(self.calculate_treynor_ratio(), 4),
+            "information_ratio": round(self.calculate_information_ratio(), 3),
             "beta": round(self.calculate_beta(), 3),
             "max_drawdown_pct": round(self.calculate_max_drawdown() * 100, 2),
             "var_95_monthly_pct": round(self.calculate_var(0.95) * 100, 2),

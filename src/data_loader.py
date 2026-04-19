@@ -265,7 +265,9 @@ def load_portfolio_with_market_data(
     tickers = portfolio_df["ticker"].tolist()
 
     current_prices = fetch_current_prices(tickers)
-    historical_prices = fetch_historical_data(tickers, years=history_years)
+    # Always include SPY (beta), ACWI & AGG (benchmark for Information Ratio)
+    history_tickers = list(dict.fromkeys(tickers + ["SPY", "ACWI", "AGG"]))
+    historical_prices = fetch_historical_data(history_tickers, years=history_years)
     ticker_info = fetch_ticker_info(tickers)
 
     return portfolio_df, current_prices, historical_prices, ticker_info

@@ -388,6 +388,9 @@ def render_overview(portfolio):
         st.write(f"- Sharpe Ratio: {format_ratio(metrics.get('sharpe_ratio'))}")
         st.write(f"- Sortino Ratio: {format_ratio(metrics.get('sortino_ratio'))}")
         st.write(f"- Treynor Ratio: {format_ratio(metrics.get('treynor_ratio'))}")
+        ir = metrics.get("information_ratio")
+        st.write(f"- Information Ratio: {format_ratio(ir) if ir is not None else 'N/A'}")
+        st.caption("Benchmark: MSCI ACWI + Bloomberg Aggregate (per GR Advisory)")
     with m3:
         st.markdown("**Κίνδυνος (Risk)**")
         vol_3y = metrics.get("volatility_3y_pct")
