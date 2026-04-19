@@ -161,8 +161,20 @@ def render_sidebar():
     )
 
     if source == "Δείγμα χαρτοφυλακίου":
+        # Auto-suggest sample based on risk profile
+        _profile_to_sample = {
+            "liquidity_plus": "Συντηρητικό (Εισόδημα)",
+            "defensive":      "Συντηρητικό (Εισόδημα)",
+            "flexible":       "Ισορροπημένο (Μέτριο)",
+            "growth":         "Δυναμικό (Επιθετικό)",
+            "dynamic":        "Δυναμικό (Επιθετικό)",
+        }
+        default_sample = _profile_to_sample.get(risk_profile, "Ισορροπημένο (Μέτριο)")
+        default_idx = list(SAMPLE_PORTFOLIOS.keys()).index(default_sample)
         sample_name = st.sidebar.selectbox(
-            "Επιλογή δείγματος", list(SAMPLE_PORTFOLIOS.keys())
+            "Επιλογή δείγματος",
+            list(SAMPLE_PORTFOLIOS.keys()),
+            index=default_idx,
         )
         csv_path = SAMPLE_PORTFOLIOS[sample_name]
         display_name = sample_name
