@@ -12,10 +12,12 @@ import logging
 import datetime
 from pathlib import Path
 
+import math
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 # Project modules
 from src.utils import build_portfolio, format_currency, format_pct, format_ratio
@@ -605,13 +607,172 @@ def _plot_composition(composition: dict):
 # Tab 2: Ανάλυση Σεναρίων
 # ---------------------------------------------------------------------------
 
+def _generate_scenario_pdf(comparison: dict, impacts: list[dict]) -> bytes:
+    """Generate scenario PDF using matplotlib (ASCII labels only for font compatibility)."""
+    buf = io.BytesIO()
+    params = comparison["scenario_params"]
+    summary = comparison["summary"]
+    metrics = comparison["metrics"]
+    name = comparison["scenario_name"]
+    desc = comparison["scenario_description"]
+    ts = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    with PdfPages(buf) as pdf:
+        # ── Page 1: Summary & Metrics ─────────────────────────────────────
+        fig, ax = plt.subplots(figsize=(11, 8.5))
+        ax.axis("off")
+        fig.patch.set_facecolor("#f9f9f9")
+
+        y = 0.96
+        fig.text(0.5, y, "Scenario Analysis Report", ha="center", fontsize=18, fontweight="bold")
+        y -= 0.05
+        fig.text(0.5, y, name, ha="center", fontsize=13, color="#333333")
+        y -= 0.04
+        fig.text(0.5, y, desc, ha="center", fontsize=9, color="#666666")
+        y -= 0.04
+        fig.text(0.05, y, f"Export date: {ts}", fontsize=8, color="#999999")
+
+        y -= 0.05
+        fig.text(0.05, y, "Scenario Parameters", fontsize=11, fontweight="bold", color="#2c3e50")
+        y -= 0.04
+        param_lines = [
+            f"Market Change:  {params['market_change_pct']:+.1f}%",
+            f"Rate Change:    {params['rate_change_pct']:+.2f}%",
+            f"Volatility Multiplier:  {params['volatility_multiplier']:.1f}x",
+        ]
+        if params.get("sector_overrides"):
+            so = ", ".join(f"{k}: {v*100:+.0f}%" for k, v in params["sector_overrides"].items())
+            param_lines.append(f"Sector Overrides:  {so}")
+        for line in param_lines:
+            fig.text(0.08, y, line, fontsize=9)
+            y -= 0.035
+
+        y -= 0.02
+        fig.text(0.05, y, "Portfolio Summary", fontsize=11, fontweight="bold", color="#2c3e50")
+        y -= 0.04
+        port_chg = summary["portfolio_change_pct"]
+        resilience = summary["resilience_vs_market_pct"]
+        summary_lines = [
+            (f"Current Value:    ${summary['current_total_value']:,.2f}", "black"),
+            (f"Scenario Value:   ${summary['scenario_total_value']:,.2f}", "black"),
+            (f"Portfolio Change: {port_chg:+.2f}%", "green" if port_chg >= 0 else "red"),
+            (f"Relative vs Market: {resilience:+.2f}%", "green" if resilience >= 0 else "red"),
+        ]
+        for line, color in summary_lines:
+            fig.text(0.08, y, line, fontsize=9, color=color)
+            y -= 0.035
+
+        # Metrics table
+        y -= 0.02
+        fig.text(0.05, y, "Metrics Comparison", fontsize=11, fontweight="bold", color="#2c3e50")
+        y -= 0.02
+
+        metric_labels = {
+            "total_value": "Portfolio Value ($)",
+            "volatility_annual_pct": "Annual Volatility (%)",
+            "sharpe_ratio": "Sharpe Ratio",
+            "max_drawdown_pct": "Max Drawdown (%)",
+            "beta": "Beta",
+            "var_95_monthly_pct": "VaR 95% Monthly (%)",
+        }
+        col_headers = ["Metric", "Current", "Scenario", "Change"]
+        col_x = [0.05, 0.45, 0.62, 0.79]
+        col_w = [0.4, 0.17, 0.17, 0.17]
+
+        # Header row
+        for hdr, x in zip(col_headers, col_x):
+            fig.text(x, y, hdr, fontsize=9, fontweight="bold",
+                     color="white",
+                     bbox=dict(boxstyle="square,pad=0.3", facecolor="#2c3e50", edgecolor="none"))
+        y -= 0.038
+
+        row_bg = ["#ffffff", "#f2f2f2"]
+        for ri, (key, label) in enumerate(metric_labels.items()):
+            m = metrics.get(key, {})
+            curr = m.get("current")
+            scen = m.get("scenario")
+            chg = m.get("change")
+            if curr is None:
+                continue
+            bg = row_bg[ri % 2]
+            vals = [
+                label,
+                f"{curr:,.2f}",
+                f"{scen:,.2f}" if scen is not None else "N/A",
+                f"{chg:+,.2f}" if chg is not None else "N/A",
+            ]
+            chg_color = "black"
+            if chg is not None:
+                # For drawdown and VaR, lower is better
+                improve = chg > 0 if key not in ("volatility_annual_pct", "max_drawdown_pct", "var_95_monthly_pct") else chg < 0
+                chg_color = "green" if improve else "red"
+
+            for vi, (val, x) in enumerate(zip(vals, col_x)):
+                color = chg_color if vi == 3 else "black"
+                fig.text(x, y, val, fontsize=8, color=color,
+                         bbox=dict(boxstyle="square,pad=0.25", facecolor=bg, edgecolor="none"))
+            y -= 0.036
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        # ── Page 2: Asset Impact ──────────────────────────────────────────
+        if impacts:
+            fig2, ax2 = plt.subplots(figsize=(11, 8.5))
+            ax2.axis("off")
+            fig2.patch.set_facecolor("#f9f9f9")
+            fig2.text(0.5, 0.97, "Asset Impact", ha="center", fontsize=14, fontweight="bold")
+            fig2.text(0.5, 0.94, name, ha="center", fontsize=10, color="#555555")
+
+            headers = ["Ticker", "Sector", "Current Value ($)", "Scenario Value ($)", "Change ($)", "Change (%)"]
+            rows = [
+                [
+                    d["ticker"],
+                    d.get("sector", ""),
+                    f"{d['current_value']:,.2f}",
+                    f"{d['scenario_value']:,.2f}",
+                    f"{d['dollar_change']:+,.2f}",
+                    f"{d['pct_change']:+.2f}%",
+                ]
+                for d in impacts
+            ]
+
+            tbl = ax2.table(
+                cellText=rows,
+                colLabels=headers,
+                loc="center",
+                bbox=[0.0, 0.05, 1.0, 0.85],
+            )
+            tbl.auto_set_font_size(False)
+            tbl.set_fontsize(9)
+            tbl.auto_set_column_width(list(range(len(headers))))
+            for (row, col), cell in tbl.get_celld().items():
+                if row == 0:
+                    cell.set_facecolor("#2c3e50")
+                    cell.set_text_props(color="white", fontweight="bold")
+                elif row % 2 == 0:
+                    cell.set_facecolor("#f2f2f2")
+                if row > 0 and col == 4:
+                    try:
+                        val = float(rows[row - 1][4].replace(",", "").replace("+", ""))
+                        cell.set_text_props(color="green" if val >= 0 else "red")
+                    except ValueError:
+                        pass
+
+            fig2.text(0.05, 0.02, f"Report: {name} | {ts}", fontsize=7, color="#aaaaaa")
+            pdf.savefig(fig2, bbox_inches="tight")
+            plt.close(fig2)
+
+    buf.seek(0)
+    return buf.read()
+
+
 def render_scenarios(portfolio, engine: ScenarioEngine):
-    st.header("Ανάλυση Σεναρίων — What-If Προσομοίωση")
+    st.header("Ανάλυση Σεναρίων — What-If Προσομοίωση ✅")
     st.markdown(
         "Επιλέξτε ένα σενάριο για να δείτε πώς θα αντιδρούσε το χαρτοφυλάκιό σας "
         "υπό διαφορετικές συνθήκες αγοράς."
     )
-
     scenarios = engine.list_scenarios()
     categories = sorted(set(s["category"] for s in scenarios))
     selected_category = st.selectbox("Φίλτρο ανά κατηγορία", ["Όλα"] + categories)
@@ -740,6 +901,55 @@ def _render_scenario_result(comparison: dict, engine: ScenarioEngine, scenario_i
 
     with st.expander("Επεξήγηση σεναρίου"):
         st.markdown(EXPLAINER.explain_scenario(comparison))
+
+    # Export section
+    st.markdown("---")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+
+    # CSV export (always works)
+    summary = comparison["summary"]
+    metrics = comparison["metrics"]
+    params = comparison["scenario_params"]
+    csv_rows = [
+        ["Scenario", comparison["scenario_name"]],
+        ["Description", comparison["scenario_description"]],
+        ["Market Change (%)", params["market_change_pct"]],
+        ["Rate Change (%)", params["rate_change_pct"]],
+        ["Volatility Multiplier", params["volatility_multiplier"]],
+        ["Current Value ($)", summary["current_total_value"]],
+        ["Scenario Value ($)", summary["scenario_total_value"]],
+        ["Portfolio Change (%)", summary["portfolio_change_pct"]],
+        ["Resilience vs Market (%)", summary["resilience_vs_market_pct"]],
+        [],
+        ["Metric", "Current", "Scenario", "Change"],
+    ]
+    for key, label in {
+        "total_value": "Portfolio Value ($)",
+        "volatility_annual_pct": "Volatility (%)",
+        "sharpe_ratio": "Sharpe Ratio",
+        "max_drawdown_pct": "Max Drawdown (%)",
+        "beta": "Beta",
+        "var_95_monthly_pct": "VaR 95% (%)",
+    }.items():
+        m = metrics.get(key, {})
+        if m.get("current") is not None:
+            csv_rows.append([label, m["current"], m.get("scenario", ""), m.get("change", "")])
+    csv_rows.append([])
+    csv_rows.append(["Ticker", "Sector", "Current Value ($)", "Scenario Value ($)", "Change ($)", "Change (%)"])
+    for d in impacts:
+        csv_rows.append([d["ticker"], d.get("sector",""), d["current_value"], d["scenario_value"], d["dollar_change"], d["pct_change"]])
+
+    csv_buf = io.StringIO()
+    for row in csv_rows:
+        csv_buf.write(",".join(str(x) for x in row) + "\n")
+
+    st.download_button(
+        label="📄 Λήψη Αναφοράς (CSV)",
+        data=csv_buf.getvalue().encode("utf-8"),
+        file_name=f"scenario_{scenario_id}_{ts}.csv",
+        mime="text/csv",
+    )
+
 
 
 def _render_multi_scenario_table(multi: dict):
@@ -1620,6 +1830,212 @@ HHI = Σ(βάρος_i²)
 - 0.15–0.25: Μέτρια συγκεντρωμένο
 - > 0.25: Υψηλά συγκεντρωμένο
 """)
+
+
+# ---------------------------------------------------------------------------
+# Tab 6: What-If Ανάλυση Βαρών
+# ---------------------------------------------------------------------------
+
+def _compute_metrics_for_weights(
+    historical_prices: "pd.DataFrame",
+    weights: dict[str, float],
+    risk_free_rate: float = 0.04,
+) -> dict:
+    """Compute portfolio metrics for an arbitrary weight dict using historical prices."""
+    available = [t for t in weights if t in historical_prices.columns]
+    if not available:
+        return {}
+
+    prices = historical_prices[available].dropna()
+    if len(prices) < 20:
+        return {}
+
+    daily_ret = np.log(prices / prices.shift(1)).dropna()
+    w = np.array([weights[t] for t in available], dtype=float)
+    total_w = w.sum()
+    if total_w == 0:
+        return {}
+    w = w / total_w
+
+    port_ret = (daily_ret * w).sum(axis=1)
+
+    ann_ret = float(port_ret.mean() * 252)
+    vol = float(port_ret.std() * np.sqrt(252))
+    sharpe = (ann_ret - risk_free_rate) / vol if vol > 0 else float("nan")
+
+    cum = (1 + port_ret).cumprod()
+    rolling_max = cum.cummax()
+    max_dd = float(((cum - rolling_max) / rolling_max).min())
+
+    var_95 = float(np.percentile(port_ret, 5) * np.sqrt(21))
+
+    downside = port_ret[port_ret < 0]
+    if len(downside) >= 5:
+        dd_dev = float(downside.std() * np.sqrt(252))
+        sortino = (ann_ret - risk_free_rate) / dd_dev if dd_dev > 0 else float("nan")
+    else:
+        sortino = float("nan")
+
+    return {
+        "ann_return_pct": ann_ret * 100,
+        "volatility_pct": vol * 100,
+        "sharpe": sharpe,
+        "sortino": sortino,
+        "max_drawdown_pct": max_dd * 100,
+        "var_95_monthly_pct": var_95 * 100,
+    }
+
+
+def render_whatif(portfolio):
+    st.header("What-If Ανάλυση Βαρών")
+    st.markdown(
+        "Αλλάξτε τα βάρη των assets με τα sliders και δείτε αμέσως πώς επηρεάζονται "
+        "τα metrics του χαρτοφυλακίου σε σύγκριση με το τρέχον."
+    )
+
+    assets = portfolio.assets
+    current_weights = portfolio.get_weights_dict()
+    tickers = list(current_weights.keys())
+    n = len(tickers)
+
+    if n == 0:
+        st.warning("Δεν βρέθηκαν assets.")
+        return
+
+    st.markdown("### Τρέχοντα Βάρη → Προτεινόμενα Βάρη")
+    st.caption(
+        "Ορίστε το νέο βάρος (%) για κάθε asset. "
+        "Το άθροισμα θα κανονικοποιηθεί αυτόματα στο 100% κατά τον υπολογισμό."
+    )
+
+    # Render sliders — one per row of 2 columns
+    new_weights_raw = {}
+    col_pairs = [st.columns(2) for _ in range((n + 1) // 2)]
+    for i, ticker in enumerate(tickers):
+        col = col_pairs[i // 2][i % 2]
+        asset = next((a for a in assets if a.ticker == ticker), None)
+        label = asset.name if (asset and asset.name and asset.name != ticker) else ticker
+        current_pct = round(current_weights[ticker] * 100, 1)
+        new_pct = col.slider(
+            f"{label} ({ticker})",
+            min_value=0.0,
+            max_value=100.0,
+            value=current_pct,
+            step=0.5,
+            key=f"whatif_slider_{ticker}",
+        )
+        new_weights_raw[ticker] = new_pct
+
+    # Show sum & normalised weights
+    total_raw = sum(new_weights_raw.values())
+    if total_raw == 0:
+        st.error("Το άθροισμα των βαρών είναι 0. Ορίστε τουλάχιστον ένα θετικό βάρος.")
+        return
+
+    new_weights_norm = {t: v / total_raw for t, v in new_weights_raw.items()}
+
+    # Summary bar
+    remaining_col, _ = st.columns([1, 2])
+    delta_color = "normal" if abs(total_raw - 100) < 0.5 else "off"
+    remaining_col.metric(
+        "Άθροισμα Βαρών",
+        f"{total_raw:.1f}%",
+        delta=f"{total_raw - 100:+.1f}% από 100%",
+        delta_color=delta_color,
+        help="Κανονικοποιείται αυτόματα στο 100% κατά τον υπολογισμό.",
+    )
+
+    st.markdown("---")
+
+    # Compute metrics
+    hist = portfolio.historical_prices
+    current_m = _compute_metrics_for_weights(hist, current_weights)
+    proposed_m = _compute_metrics_for_weights(hist, new_weights_norm)
+
+    if not current_m or not proposed_m:
+        st.warning("Ανεπαρκή ιστορικά δεδομένα για υπολογισμό metrics.")
+        return
+
+    # Side-by-side comparison
+    st.subheader("Σύγκριση Τρέχοντος vs Προτεινόμενου Χαρτοφυλακίου")
+
+    metric_defs = [
+        ("Αναμ. Ετήσια Απόδοση (%)", "ann_return_pct", True),
+        ("Ετήσια Μεταβλητότητα (%)", "volatility_pct", False),
+        ("Sharpe Ratio", "sharpe", True),
+        ("Sortino Ratio", "sortino", True),
+        ("Max Drawdown (%)", "max_drawdown_pct", True),
+        ("VaR 95% Μηνιαίο (%)", "var_95_monthly_pct", True),
+    ]
+
+    col_labels = st.columns([2, 1, 1, 1])
+    col_labels[0].markdown("**Δείκτης**")
+    col_labels[1].markdown("**Τρέχον**")
+    col_labels[2].markdown("**Προτεινόμενο**")
+    col_labels[3].markdown("**Μεταβολή**")
+
+    for label, key, higher_is_better in metric_defs:
+        curr_val = current_m.get(key)
+        prop_val = proposed_m.get(key)
+        cols = st.columns([2, 1, 1, 1])
+        cols[0].write(label)
+        cols[1].write(f"{curr_val:.2f}" if curr_val is not None else "N/A")
+        if prop_val is not None and curr_val is not None:
+            diff = prop_val - curr_val
+            improved = (diff > 0) == higher_is_better
+            sign = "+" if diff >= 0 else ""
+            diff_str = f"{sign}{diff:.2f}"
+            cols[2].write(f"{prop_val:.2f}")
+            cols[3].markdown(
+                f"<span style='color:{'green' if improved else 'red'}'>{diff_str}</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            cols[2].write("N/A")
+            cols[3].write("—")
+
+    st.markdown("---")
+
+    # Weight comparison table
+    st.subheader("Κατανομή Βαρών")
+    weight_rows = []
+    for ticker in tickers:
+        asset = next((a for a in assets if a.ticker == ticker), None)
+        name = asset.name if (asset and asset.name and asset.name != ticker) else ticker
+        weight_rows.append({
+            "Ticker": ticker,
+            "Όνομα": name,
+            "Τρέχον Βάρος (%)": f"{current_weights[ticker] * 100:.1f}%",
+            "Προτεινόμενο Βάρος (%)": f"{new_weights_norm[ticker] * 100:.1f}%",
+            "Διαφορά (%)": f"{(new_weights_norm[ticker] - current_weights[ticker]) * 100:+.1f}%",
+        })
+    st.dataframe(pd.DataFrame(weight_rows), use_container_width=True)
+
+    # Cumulative return chart
+    st.subheader("Ιστορική Εξέλιξη (Cumulative Return)")
+    available_curr = [t for t in tickers if t in hist.columns]
+    if available_curr:
+        prices = hist[available_curr].dropna()
+        daily_ret = np.log(prices / prices.shift(1)).dropna()
+
+        # Current weights cumulative return
+        w_curr = np.array([current_weights.get(t, 0) for t in available_curr], dtype=float)
+        w_curr = w_curr / w_curr.sum() if w_curr.sum() > 0 else w_curr
+        port_curr = (daily_ret * w_curr).sum(axis=1)
+        cum_curr = (1 + port_curr).cumprod() - 1
+
+        # Proposed weights cumulative return
+        w_prop = np.array([new_weights_norm.get(t, 0) for t in available_curr], dtype=float)
+        w_prop = w_prop / w_prop.sum() if w_prop.sum() > 0 else w_prop
+        port_prop = (daily_ret * w_prop).sum(axis=1)
+        cum_prop = (1 + port_prop).cumprod() - 1
+
+        chart_df = pd.DataFrame({
+            "Τρέχον Χαρτοφυλάκιο": cum_curr * 100,
+            "Προτεινόμενο Χαρτοφυλάκιο": cum_prop * 100,
+        })
+        st.line_chart(chart_df)
+        st.caption("Σωρευτική απόδοση (%) βασισμένη σε ιστορικά δεδομένα με τα νέα βάρη.")
 
 
 # ---------------------------------------------------------------------------
