@@ -768,7 +768,7 @@ def _generate_scenario_pdf(comparison: dict, impacts: list[dict]) -> bytes:
 
 
 def render_scenarios(portfolio, engine: ScenarioEngine):
-    st.header("Ανάλυση Σεναρίων — What-If Προσομοίωση ✅")
+    st.header("Ανάλυση Σεναρίων — What-If Προσομοίωση")
     st.markdown(
         "Επιλέξτε ένα σενάριο για να δείτε πώς θα αντιδρούσε το χαρτοφυλάκιό σας "
         "υπό διαφορετικές συνθήκες αγοράς."
@@ -901,54 +901,6 @@ def _render_scenario_result(comparison: dict, engine: ScenarioEngine, scenario_i
 
     with st.expander("Επεξήγηση σεναρίου"):
         st.markdown(EXPLAINER.explain_scenario(comparison))
-
-    # Export section
-    st.markdown("---")
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-
-    # CSV export (always works)
-    summary = comparison["summary"]
-    metrics = comparison["metrics"]
-    params = comparison["scenario_params"]
-    csv_rows = [
-        ["Scenario", comparison["scenario_name"]],
-        ["Description", comparison["scenario_description"]],
-        ["Market Change (%)", params["market_change_pct"]],
-        ["Rate Change (%)", params["rate_change_pct"]],
-        ["Volatility Multiplier", params["volatility_multiplier"]],
-        ["Current Value ($)", summary["current_total_value"]],
-        ["Scenario Value ($)", summary["scenario_total_value"]],
-        ["Portfolio Change (%)", summary["portfolio_change_pct"]],
-        ["Resilience vs Market (%)", summary["resilience_vs_market_pct"]],
-        [],
-        ["Metric", "Current", "Scenario", "Change"],
-    ]
-    for key, label in {
-        "total_value": "Portfolio Value ($)",
-        "volatility_annual_pct": "Volatility (%)",
-        "sharpe_ratio": "Sharpe Ratio",
-        "max_drawdown_pct": "Max Drawdown (%)",
-        "beta": "Beta",
-        "var_95_monthly_pct": "VaR 95% (%)",
-    }.items():
-        m = metrics.get(key, {})
-        if m.get("current") is not None:
-            csv_rows.append([label, m["current"], m.get("scenario", ""), m.get("change", "")])
-    csv_rows.append([])
-    csv_rows.append(["Ticker", "Sector", "Current Value ($)", "Scenario Value ($)", "Change ($)", "Change (%)"])
-    for d in impacts:
-        csv_rows.append([d["ticker"], d.get("sector",""), d["current_value"], d["scenario_value"], d["dollar_change"], d["pct_change"]])
-
-    csv_buf = io.StringIO()
-    for row in csv_rows:
-        csv_buf.write(",".join(str(x) for x in row) + "\n")
-
-    st.download_button(
-        label="📄 Λήψη Αναφοράς (CSV)",
-        data=csv_buf.getvalue().encode("utf-8"),
-        file_name=f"scenario_{scenario_id}_{ts}.csv",
-        mime="text/csv",
-    )
 
 
 
