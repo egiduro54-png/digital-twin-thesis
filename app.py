@@ -36,7 +36,7 @@ from src.validation import (
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Σύστημα Συμβουλευτικής Επενδύσεων — Digital Twin",
+    page_title="Digital Twin Investment Advisory System",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -2589,7 +2589,7 @@ def main():
     except Exception as exc:
         st.sidebar.error(f"Σφάλμα sidebar: {exc}")
 
-    st.title("Σύστημα Συμβουλευτικής Επενδύσεων — Digital Twin")
+    st.title("Digital Twin Investment Advisory System")
     st.caption(
         "Προσομοίωση σεναρίων χαρτοφυλακίου, παρακολούθηση κινδύνου "
         "και επεξηγήσιμες προτάσεις αναδιάρθρωσης."
@@ -2681,7 +2681,7 @@ def main():
 
     st.markdown("---")
     st.caption(
-        "📊 Σύστημα Συμβουλευτικής Επενδύσεων — Digital Twin | "
+        "📊 Digital Twin Investment Advisory System | "
         "Δεδομένα αγοράς: Yahoo Finance (yfinance) | "
         "⚠️ Για εκπαιδευτικούς σκοπούς μόνο — δεν αποτελεί επενδυτική συμβουλή."
     )
