@@ -32,7 +32,6 @@ from src.validation import (
     PORTFOLIO_ARCHETYPES,
 )
 from src.regulatory import RegulatoryChecker
-from src.suitability import QUESTIONS, calculate_suitability
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -2661,241 +2660,6 @@ def render_validation():
             )
 
 
-# ---------------------------------------------------------------------------
-# Tab 7: MiFID II Suitability Assessment
-# ---------------------------------------------------------------------------
-
-def render_suitability():
-    st.header("MiFID II Suitability Assessment")
-    st.markdown(
-        "Συμπληρώστε το ερωτηματολόγιο για να προσδιοριστεί το επενδυτικό προφίλ "
-        "του πελάτη σύμφωνα με τις απαιτήσεις MiFID II (Άρθρο 25)."
-    )
-
-    answers = {}
-    for q in QUESTIONS:
-        st.markdown(f"**{q['text']}**")
-        options_labels = [label for label, _ in q["options"]]
-        choice = st.radio(
-            label=q["text"],
-            options=options_labels,
-            label_visibility="collapsed",
-            key=f"suit_{q['id']}",
-        )
-        score = dict(q["options"])[choice]
-        answers[q["id"]] = score
-        st.markdown("")
-
-    if st.button("Υπολογισμός Προφίλ"):
-        result = calculate_suitability(answers)
-        st.session_state["suitability_result"] = result
-
-    result = st.session_state.get("suitability_result")
-    if result is None:
-        return
-
-    st.markdown("---")
-    st.subheader("Αποτέλεσμα Αξιολόγησης")
-
-    profile_colors = {
-        "liquidity_plus": "#17a2b8",
-        "defensive": "#28a745",
-        "flexible": "#ffc107",
-        "growth": "#fd7e14",
-        "dynamic": "#dc3545",
-    }
-    color = profile_colors.get(result.risk_profile, "#6c757d")
-
-    st.markdown(
-        f"<div style='background:{color};color:white;padding:16px 20px;"
-        f"border-radius:8px;font-size:1.2rem;font-weight:bold;margin-bottom:16px'>"
-        f"Προτεινόμενο Προφίλ: {result.profile_label}</div>",
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Συνολική Βαθμολογία", f"{result.score} / {result.max_score}")
-    c2.metric("Risk Profile", result.risk_profile.replace("_", " ").title())
-    c3.metric("PRIIPs SRI Score", f"{result.sri_score} / 7")
-
-    st.markdown("### Βαθμολογία ανά Διάσταση")
-    for dim, score in result.dimension_scores.items():
-        st.write(f"**{dim}:** {score} βαθμοί")
-
-    if result.flags:
-        st.markdown("### ⚠️ Σημαντικές Παρατηρήσεις")
-        for flag in result.flags:
-            st.warning(flag)
-
-    # PDF Client Report
-    st.markdown("---")
-    portfolio = st.session_state.get("portfolio")
-    if portfolio:
-        if st.button("📄 Δημιουργία PDF Αναφοράς Πελάτη"):
-            with st.spinner("Δημιουργία PDF..."):
-                try:
-                    pdf_bytes = _generate_client_pdf(portfolio, result)
-                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-                    st.download_button(
-                        label="⬇️ Λήψη PDF Αναφοράς",
-                        data=pdf_bytes,
-                        file_name=f"client_report_{ts}.pdf",
-                        mime="application/pdf",
-                    )
-                except Exception as e:
-                    st.error(f"Σφάλμα δημιουργίας PDF: {e}")
-                    st.exception(e)
-    else:
-        st.info("Φορτώστε χαρτοφυλάκιο για να δημιουργήσετε πλήρη αναφορά πελάτη.")
-
-
-def _generate_client_pdf(portfolio, suitability_result) -> bytes:
-    """Generate a professional client report PDF using matplotlib."""
-    buf = io.BytesIO()
-    ts = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    metrics = portfolio.get_metrics()
-
-    with PdfPages(buf) as pdf:
-        # ── Page 1: Cover ────────────────────────────────────────────────
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        ax.axis("off")
-        fig.patch.set_facecolor("#1a252f")
-
-        fig.text(0.5, 0.75, "Digital Twin Investment Advisory System",
-                 ha="center", fontsize=22, fontweight="bold", color="white")
-        fig.text(0.5, 0.65, "Client Portfolio Report",
-                 ha="center", fontsize=16, color="#aaaaaa")
-        fig.text(0.5, 0.55, portfolio.name,
-                 ha="center", fontsize=14, color="white")
-        fig.text(0.5, 0.45,
-                 f"Risk Profile: {suitability_result.profile_label}",
-                 ha="center", fontsize=12, color="#f0c040")
-        fig.text(0.5, 0.30, f"Report Date: {ts}",
-                 ha="center", fontsize=10, color="#888888")
-        fig.text(0.5, 0.10,
-                 "For informational purposes only. Not investment advice.",
-                 ha="center", fontsize=8, color="#666666")
-
-        pdf.savefig(fig, bbox_inches="tight")
-        plt.close(fig)
-
-        # ── Page 2: Portfolio Summary ─────────────────────────────────────
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        ax.axis("off")
-        fig.patch.set_facecolor("#f9f9f9")
-
-        fig.text(0.5, 0.96, "Portfolio Summary", ha="center",
-                 fontsize=16, fontweight="bold")
-        fig.text(0.05, 0.90, f"Portfolio: {portfolio.name}    |    "
-                 f"Risk Profile: {suitability_result.risk_profile.replace('_',' ').title()}    |    "
-                 f"Date: {ts}", fontsize=9, color="#555555")
-
-        summary_data = [
-            ["Total Value", f"${portfolio.total_value:,.2f}"],
-            ["Total Cost", f"${portfolio.total_cost:,.2f}"],
-            ["Unrealized P&L", f"${portfolio.total_value - portfolio.total_cost:,.2f}"],
-            ["Total Return", f"{portfolio.total_return_pct:.2f}%"],
-            ["Number of Assets", str(len(portfolio.assets))],
-            ["Risk Profile", suitability_result.profile_label],
-            ["PRIIPs SRI Score", f"{suitability_result.sri_score} / 7"],
-        ]
-
-        tbl = ax.table(
-            cellText=summary_data,
-            colLabels=["Metric", "Value"],
-            loc="upper center",
-            bbox=[0.05, 0.55, 0.9, 0.32],
-        )
-        tbl.auto_set_font_size(False)
-        tbl.set_fontsize(10)
-        for (row, col), cell in tbl.get_celld().items():
-            if row == 0:
-                cell.set_facecolor("#2c3e50")
-                cell.set_text_props(color="white", fontweight="bold")
-            elif row % 2 == 0:
-                cell.set_facecolor("#f2f2f2")
-
-        # Asset breakdown table
-        fig.text(0.05, 0.52, "Asset Breakdown", fontsize=12, fontweight="bold")
-        asset_data = [
-            [
-                a.ticker,
-                a.name[:25] if a.name else a.ticker,
-                a.asset_class,
-                f"${a.current_value:,.2f}",
-                f"{a.current_value/portfolio.total_value*100:.1f}%",
-                f"{a.unrealized_pnl_pct:+.2f}%",
-            ]
-            for a in portfolio.assets
-        ]
-        tbl2 = ax.table(
-            cellText=asset_data,
-            colLabels=["Ticker", "Name", "Asset Class", "Value ($)", "Weight", "P&L %"],
-            loc="lower center",
-            bbox=[0.05, 0.05, 0.9, 0.44],
-        )
-        tbl2.auto_set_font_size(False)
-        tbl2.set_fontsize(8)
-        tbl2.auto_set_column_width(list(range(6)))
-        for (row, col), cell in tbl2.get_celld().items():
-            if row == 0:
-                cell.set_facecolor("#2c3e50")
-                cell.set_text_props(color="white", fontweight="bold")
-            elif row % 2 == 0:
-                cell.set_facecolor("#f2f2f2")
-
-        pdf.savefig(fig, bbox_inches="tight")
-        plt.close(fig)
-
-        # ── Page 3: Risk Metrics ──────────────────────────────────────────
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        ax.axis("off")
-        fig.patch.set_facecolor("#f9f9f9")
-        fig.text(0.5, 0.96, "Risk Metrics", ha="center",
-                 fontsize=16, fontweight="bold")
-
-        risk_rows = [
-            ["Annual Volatility", f"{metrics.get('volatility_annual_pct', 0):.2f}%"],
-            ["Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.3f}"],
-            ["Sortino Ratio", f"{metrics.get('sortino_ratio', 0):.3f}"],
-            ["Treynor Ratio", f"{metrics.get('treynor_ratio', 0):.3f}"],
-            ["Beta", f"{metrics.get('beta', 0):.3f}"],
-            ["Max Drawdown", f"{metrics.get('max_drawdown_pct', 0):.2f}%"],
-            ["VaR 95% (Monthly)", f"{metrics.get('var_95_monthly_pct', 0):.2f}%"],
-            ["Expected Annual Return", f"{metrics.get('expected_annual_return_pct', 0):.2f}%"],
-        ]
-
-        tbl3 = ax.table(
-            cellText=risk_rows,
-            colLabels=["Risk Metric", "Value"],
-            loc="center",
-            bbox=[0.1, 0.35, 0.8, 0.55],
-        )
-        tbl3.auto_set_font_size(False)
-        tbl3.set_fontsize(11)
-        for (row, col), cell in tbl3.get_celld().items():
-            if row == 0:
-                cell.set_facecolor("#2c3e50")
-                cell.set_text_props(color="white", fontweight="bold")
-            elif row % 2 == 0:
-                cell.set_facecolor("#f2f2f2")
-
-        # MiFID Suitability summary
-        fig.text(0.1, 0.32, "MiFID II Suitability Summary", fontsize=12, fontweight="bold")
-        fig.text(0.1, 0.27, f"Suitability Score: {suitability_result.score} / {suitability_result.max_score}", fontsize=10)
-        fig.text(0.1, 0.23, f"Recommended Profile: {suitability_result.profile_label}", fontsize=10)
-        fig.text(0.1, 0.19, f"PRIIPs SRI: {suitability_result.sri_score} / 7", fontsize=10)
-
-        fig.text(0.1, 0.08,
-                 "This report was generated by the Digital Twin Investment Advisory System. "
-                 "For informational purposes only.",
-                 fontsize=7, color="#888888")
-
-        pdf.savefig(fig, bbox_inches="tight")
-        plt.close(fig)
-
-    buf.seek(0)
-    return buf.read()
 
 
 # ---------------------------------------------------------------------------
@@ -2922,14 +2686,13 @@ def main():
     portfolio = st.session_state.get("portfolio")
 
     # Tab 5 (Πειραματική Αξιολόγηση) is always available, independent of portfolio
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📈 Επισκόπηση Χαρτοφυλακίου",
         "🔀 Ανάλυση Σεναρίων",
         "⚠️ Παρακολούθηση Κινδύνου",
         "💡 Προτάσεις Αναδιάρθρωσης",
         "🔬 Πειραματική Αξιολόγηση",
         "⚖️ Regulatory Compliance",
-        "📋 MiFID II Suitability",
     ])
 
     with tab1:
@@ -3011,12 +2774,6 @@ def main():
                 st.error(f"Σφάλμα regulatory: {e}")
                 st.exception(e)
 
-    with tab7:
-        try:
-            render_suitability()
-        except Exception as e:
-            st.error(f"Σφάλμα suitability: {e}")
-            st.exception(e)
 
     st.markdown("---")
     st.caption(
