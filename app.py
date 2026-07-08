@@ -31,6 +31,7 @@ from src.validation import (
     ValidationResults,
     PORTFOLIO_ARCHETYPES,
 )
+from src.regulatory import RegulatoryChecker
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -1991,6 +1992,87 @@ def render_whatif(portfolio):
 
 
 # ---------------------------------------------------------------------------
+# Tab 6: Regulatory Compliance
+# ---------------------------------------------------------------------------
+
+def render_regulatory(portfolio):
+    st.header("Regulatory Compliance — MiFID II / PRIIPs")
+    st.markdown(
+        "Αξιολόγηση συμμόρφωσης χαρτοφυλακίου με το κανονιστικό πλαίσιο "
+        "MiFID II (καταλληλότητα) και PRIIPs (δείκτης κινδύνου SRI)."
+    )
+
+    checker = RegulatoryChecker(portfolio)
+    report = checker.run_all_checks()
+    summary = report.summary()
+
+    # Overall status banner
+    status_colors = {"PASS": "#28a745", "WARNING": "#ffc107", "BREACH": "#dc3545"}
+    status_labels = {"PASS": "✅ ΣΥΜΜΟΡΦΩΜΕΝΟ", "WARNING": "⚠️ ΠΡΟΕΙΔΟΠΟΙΗΣΗ", "BREACH": "🚨 ΠΑΡΑΒΑΣΗ"}
+    color = status_colors[report.overall_status]
+    label = status_labels[report.overall_status]
+
+    st.markdown(
+        f"<div style='background:{color};color:white;padding:16px 20px;"
+        f"border-radius:8px;font-size:1.2rem;font-weight:bold;margin-bottom:16px'>"
+        f"{label}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Summary metrics
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Συνολικοί Έλεγχοι", summary["total"])
+    c2.metric("✅ PASS", summary["passes"])
+    c3.metric("⚠️ WARNING", summary["warnings"])
+    c4.metric("🚨 BREACH", summary["breaches"])
+
+    # PRIIPs SRI Score
+    st.markdown("---")
+    sri = report.sri_score
+    sri_descriptions = {
+        0: "Μη υπολογίσιμο",
+        1: "Πολύ Χαμηλός", 2: "Χαμηλός", 3: "Μέτρια Χαμηλός",
+        4: "Μέτριος", 5: "Μέτρια Υψηλός", 6: "Υψηλός", 7: "Πολύ Υψηλός",
+    }
+    sri_color = ["#gray","#00b050","#00b050","#92d050","#ffff00","#ff9900","#ff0000","#c00000"]
+    st.subheader("PRIIPs Synthetic Risk Indicator (SRI)")
+    sri_cols = st.columns(7)
+    for i, col in enumerate(sri_cols, start=1):
+        bg = "#2c3e50" if i == sri else "#ecf0f1"
+        fc = "white" if i == sri else "#666"
+        col.markdown(
+            f"<div style='background:{bg};color:{fc};text-align:center;"
+            f"padding:12px 4px;border-radius:6px;font-weight:bold;font-size:1.1rem'>"
+            f"{i}</div>",
+            unsafe_allow_html=True,
+        )
+    st.caption(f"SRI {sri}/7 — {sri_descriptions.get(sri, '')}  |  Βασίζεται στην ιστορική μεταβλητότητα (PRIIPs Regulation EU 1286/2014)")
+
+    # Individual checks
+    st.markdown("---")
+    st.subheader("Αναλυτικοί Έλεγχοι")
+
+    check_icons = {"PASS": "✅", "WARNING": "⚠️", "BREACH": "🚨"}
+    check_colors = {"PASS": "#d4edda", "WARNING": "#fff3cd", "BREACH": "#f8d7da"}
+    check_border = {"PASS": "#28a745", "WARNING": "#ffc107", "BREACH": "#dc3545"}
+
+    for check in report.checks:
+        icon = check_icons[check.status]
+        bg = check_colors[check.status]
+        border = check_border[check.status]
+        st.markdown(
+            f"<div style='background:{bg};border-left:4px solid {border};"
+            f"padding:12px 16px;border-radius:4px;margin-bottom:10px'>"
+            f"<strong>{icon} {check.name}</strong><br/>"
+            f"<span style='color:#555'>Τιμή: <b>{check.value}</b> &nbsp;|&nbsp; Όριο: {check.threshold}</span><br/>"
+            f"{check.message}"
+            f"{'<br/><em>→ ' + check.recommendation + '</em>' if check.recommendation else ''}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tab 5: Πειραματική Αξιολόγηση (Experimental Validation)
 # ---------------------------------------------------------------------------
 
@@ -2602,12 +2684,13 @@ def main():
     portfolio = st.session_state.get("portfolio")
 
     # Tab 5 (Πειραματική Αξιολόγηση) is always available, independent of portfolio
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📈 Επισκόπηση Χαρτοφυλακίου",
         "🔀 Ανάλυση Σεναρίων",
         "⚠️ Παρακολούθηση Κινδύνου",
         "💡 Προτάσεις Αναδιάρθρωσης",
         "🔬 Πειραματική Αξιολόγηση",
+        "⚖️ Regulatory Compliance",
     ])
 
     with tab1:
@@ -2678,6 +2761,16 @@ def main():
         except Exception as e:
             st.error(f"Σφάλμα αξιολόγησης: {e}")
             st.exception(e)
+
+    with tab6:
+        if portfolio is None:
+            st.info("Φορτώστε χαρτοφυλάκιο για να δείτε την ανάλυση κανονιστικής συμμόρφωσης.")
+        else:
+            try:
+                render_regulatory(portfolio)
+            except Exception as e:
+                st.error(f"Σφάλμα regulatory: {e}")
+                st.exception(e)
 
     st.markdown("---")
     st.caption(
