@@ -994,6 +994,122 @@ def _render_alert_card(alert: dict):
 # Tab 4: Προτάσεις Αναδιάρθρωσης
 # ---------------------------------------------------------------------------
 
+def _generate_proposal_pdf(recs: list, all_trades: list, portfolio) -> bytes:
+    """Generate a client-ready Trade Proposal PDF."""
+    buf = io.BytesIO()
+    ts = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    port_name = portfolio.name if portfolio else "Portfolio"
+
+    sell_total = sum(t["value"] for t in all_trades if t.get("action") == "SELL")
+    buy_total  = sum(t["value"] for t in all_trades if t.get("action") == "BUY")
+    net        = buy_total - sell_total
+
+    with PdfPages(buf) as pdf:
+        # ── Page 1: Cover ────────────────────────────────────────────────
+        fig, ax = plt.subplots(figsize=(11, 8.5))
+        ax.axis("off")
+        fig.patch.set_facecolor("#1a252f")
+        fig.text(0.5, 0.72, "Digital Twin Investment Advisory System",
+                 ha="center", fontsize=20, fontweight="bold", color="white")
+        fig.text(0.5, 0.62, "Portfolio Rebalancing Proposal",
+                 ha="center", fontsize=15, color="#aaaaaa")
+        fig.text(0.5, 0.52, port_name,
+                 ha="center", fontsize=13, color="white")
+        fig.text(0.5, 0.38, f"Date: {ts}",
+                 ha="center", fontsize=10, color="#888888")
+        fig.text(0.5, 0.28, f"Total Recommendations: {len(recs)}",
+                 ha="center", fontsize=10, color="#aaaaaa")
+        fig.text(0.5, 0.12,
+                 "For informational purposes only. Not investment advice.",
+                 ha="center", fontsize=8, color="#666666")
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        # ── Page 2: Trade Summary ────────────────────────────────────────
+        fig, ax = plt.subplots(figsize=(11, 8.5))
+        ax.axis("off")
+        fig.patch.set_facecolor("#f9f9f9")
+        fig.text(0.5, 0.96, "Trade Summary", ha="center", fontsize=16, fontweight="bold")
+        fig.text(0.05, 0.91, f"Portfolio: {port_name}   |   Date: {ts}", fontsize=9, color="#555")
+
+        # Summary metrics
+        fig.text(0.10, 0.85, f"Total Sells:  ${sell_total:,.2f}", fontsize=11, color="#c0392b")
+        fig.text(0.40, 0.85, f"Total Buys:   ${buy_total:,.2f}", fontsize=11, color="#27ae60")
+        net_color = "#27ae60" if net <= 0 else "#c0392b"
+        fig.text(0.70, 0.85, f"Net Capital:  ${net:,.2f}", fontsize=11, color=net_color)
+
+        # Trades table
+        if all_trades:
+            trade_rows = [
+                [
+                    t.get("ticker", ""),
+                    t.get("action", ""),
+                    str(int(t.get("quantity", 0))),
+                    f"${t.get('price', 0):,.2f}",
+                    f"${t.get('value', 0):,.2f}",
+                ]
+                for t in all_trades
+            ]
+            tbl = ax.table(
+                cellText=trade_rows,
+                colLabels=["Ticker", "Action", "Shares", "Price ($)", "Value ($)"],
+                loc="center",
+                bbox=[0.05, 0.20, 0.90, 0.60],
+            )
+            tbl.auto_set_font_size(False)
+            tbl.set_fontsize(10)
+            tbl.auto_set_column_width(list(range(5)))
+            for (row, col), cell in tbl.get_celld().items():
+                if row == 0:
+                    cell.set_facecolor("#2c3e50")
+                    cell.set_text_props(color="white", fontweight="bold")
+                elif row % 2 == 0:
+                    cell.set_facecolor("#f2f2f2")
+                if row > 0 and col == 1:
+                    action = trade_rows[row - 1][1]
+                    cell.set_text_props(color="#c0392b" if action == "SELL" else "#27ae60",
+                                       fontweight="bold")
+
+        fig.text(0.05, 0.08,
+                 "This proposal was generated automatically by the Digital Twin system.",
+                 fontsize=7, color="#aaaaaa")
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        # ── Page 3: Recommendations Detail ──────────────────────────────
+        fig, ax = plt.subplots(figsize=(11, 8.5))
+        ax.axis("off")
+        fig.patch.set_facecolor("#f9f9f9")
+        fig.text(0.5, 0.96, "Recommendation Details", ha="center",
+                 fontsize=16, fontweight="bold")
+
+        priority_map = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
+        y = 0.88
+        for rec in recs[:6]:  # max 6 per page
+            if y < 0.05:
+                break
+            priority = rec.get("priority", "medium")
+            color_map = {"critical": "#dc3545", "high": "#fd7e14",
+                         "medium": "#ffc107", "low": "#28a745"}
+            c = color_map.get(priority, "#333")
+            fig.text(0.05, y,
+                     f"[{priority_map.get(priority, '')}] {rec.get('title', '')}",
+                     fontsize=10, fontweight="bold", color=c)
+            y -= 0.04
+            fig.text(0.07, y, f"Action: {rec.get('action', '')}", fontsize=9, color="#333")
+            y -= 0.035
+            fig.text(0.07, y, f"Why: {rec.get('why', '')[:120]}", fontsize=8, color="#555")
+            y -= 0.05
+
+        fig.text(0.05, 0.03, f"Digital Twin Investment Advisory System | {ts}",
+                 fontsize=7, color="#aaaaaa")
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    buf.seek(0)
+    return buf.read()
+
+
 def render_recommendations(recs: list):
     st.header("Προτάσεις Αναδιάρθρωσης (Rebalancing Recommendations)")
     st.markdown(
@@ -1054,14 +1170,34 @@ def render_recommendations(recs: list):
             st.dataframe(trades_df)
 
     st.markdown("---")
-    if st.button("Εξαγωγή Προτάσεων (κείμενο)"):
-        text = EXPLAINER.explain_all_recommendations(recs)
-        st.download_button(
-            label="Λήψη recommendations.txt",
-            data=text,
-            file_name="recommendations.txt",
-            mime="text/plain",
-        )
+    col_pdf, col_txt = st.columns([1, 1])
+
+    with col_pdf:
+        if st.button("📄 Εξαγωγή PDF για Πελάτη"):
+            portfolio = st.session_state.get("portfolio")
+            with st.spinner("Δημιουργία PDF..."):
+                try:
+                    pdf_bytes = _generate_proposal_pdf(recs, all_trades, portfolio)
+                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+                    st.download_button(
+                        label="⬇️ Λήψη Trade Proposal PDF",
+                        data=pdf_bytes,
+                        file_name=f"trade_proposal_{ts}.pdf",
+                        mime="application/pdf",
+                    )
+                except Exception as e:
+                    st.error(f"Σφάλμα PDF: {e}")
+                    st.exception(e)
+
+    with col_txt:
+        if st.button("Εξαγωγή Προτάσεων (κείμενο)"):
+            text = EXPLAINER.explain_all_recommendations(recs)
+            st.download_button(
+                label="Λήψη recommendations.txt",
+                data=text,
+                file_name="recommendations.txt",
+                mime="text/plain",
+            )
 
 
 def _render_recommendation_card(rec: dict):
