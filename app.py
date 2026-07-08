@@ -1076,35 +1076,41 @@ def _generate_proposal_pdf(recs: list, all_trades: list, portfolio) -> bytes:
         pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
 
-        # ── Page 3: Recommendations Detail ──────────────────────────────
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        ax.axis("off")
-        fig.patch.set_facecolor("#f9f9f9")
-        fig.text(0.5, 0.96, "Recommendation Details", ha="center",
-                 fontsize=16, fontweight="bold")
-
+        # ── Pages 3+: Recommendations Detail (5 per page) ───────────────
         priority_map = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
-        y = 0.88
-        for rec in recs[:6]:  # max 6 per page
-            if y < 0.05:
-                break
-            priority = rec.get("priority", "medium")
-            color_map = {"critical": "#dc3545", "high": "#fd7e14",
-                         "medium": "#ffc107", "low": "#28a745"}
-            c = color_map.get(priority, "#333")
-            fig.text(0.05, y,
-                     f"[{priority_map.get(priority, '')}] {rec.get('title', '')}",
-                     fontsize=10, fontweight="bold", color=c)
-            y -= 0.04
-            fig.text(0.07, y, f"Action: {rec.get('action', '')}", fontsize=9, color="#333")
-            y -= 0.035
-            fig.text(0.07, y, f"Why: {rec.get('why', '')[:120]}", fontsize=8, color="#555")
-            y -= 0.05
+        color_map = {"critical": "#dc3545", "high": "#fd7e14",
+                     "medium": "#e6a817", "low": "#28a745"}
+        chunk_size = 5
+        for page_idx in range(0, max(1, len(recs)), chunk_size):
+            chunk = recs[page_idx: page_idx + chunk_size]
+            total_pages = (len(recs) + chunk_size - 1) // chunk_size
+            page_num = page_idx // chunk_size + 1
 
-        fig.text(0.05, 0.03, f"Digital Twin Investment Advisory System | {ts}",
-                 fontsize=7, color="#aaaaaa")
-        pdf.savefig(fig, bbox_inches="tight")
-        plt.close(fig)
+            fig, ax = plt.subplots(figsize=(11, 8.5))
+            ax.axis("off")
+            fig.patch.set_facecolor("#f9f9f9")
+            fig.text(0.5, 0.96, "Recommendation Details", ha="center",
+                     fontsize=16, fontweight="bold")
+            fig.text(0.5, 0.93, f"Page {page_num} of {total_pages}",
+                     ha="center", fontsize=9, color="#888")
+
+            y = 0.87
+            for rec in chunk:
+                priority = rec.get("priority", "medium")
+                c = color_map.get(priority, "#333")
+                fig.text(0.05, y,
+                         f"[{priority_map.get(priority, '')}] {rec.get('title', '')}",
+                         fontsize=10, fontweight="bold", color=c)
+                y -= 0.04
+                fig.text(0.07, y, f"Action: {rec.get('action', '')}", fontsize=9, color="#333")
+                y -= 0.035
+                fig.text(0.07, y, f"Why: {rec.get('why', '')[:140]}", fontsize=8, color="#555")
+                y -= 0.055
+
+            fig.text(0.05, 0.03, f"Digital Twin Investment Advisory System | {ts}",
+                     fontsize=7, color="#aaaaaa")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
 
     buf.seek(0)
     return buf.read()
