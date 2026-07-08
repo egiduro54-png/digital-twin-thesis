@@ -13,6 +13,7 @@ import datetime
 from pathlib import Path
 
 import math
+import textwrap
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -1076,24 +1077,49 @@ def _generate_proposal_pdf(recs: list, all_trades: list, portfolio) -> bytes:
         pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
 
-        # ── Pages 3+: Recommendations Detail (5 per page) ───────────────
+        # ── Pages 3+: Recommendations Detail ────────────────────────────
         priority_map = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
         color_map = {"critical": "#dc3545", "high": "#fd7e14",
                      "medium": "#e6a817", "low": "#28a745"}
-        chunk_size = 5
-        for page_idx in range(0, max(1, len(recs)), chunk_size):
-            chunk = recs[page_idx: page_idx + chunk_size]
-            total_pages = (len(recs) + chunk_size - 1) // chunk_size
-            page_num = page_idx // chunk_size + 1
+        LINE_H = 0.032   # height per text line
+        MARGIN_BOTTOM = 0.06
 
-            fig, ax = plt.subplots(figsize=(11, 8.5))
-            ax.axis("off")
-            fig.patch.set_facecolor("#f9f9f9")
-            fig.text(0.5, 0.96, "Recommendation Details", ha="center",
-                     fontsize=16, fontweight="bold")
-            fig.text(0.5, 0.93, f"Page {page_num} of {total_pages}",
-                     ha="center", fontsize=9, color="#888")
+        def _rec_height(rec):
+            why_lines = len(textwrap.wrap(rec.get("why", ""), width=95))
+            action_lines = len(textwrap.wrap(rec.get("action", ""), width=95))
+            return LINE_H * (1 + action_lines + why_lines) + 0.025
 
+        def _new_rec_page(page_num, total_pages):
+            f, a = plt.subplots(figsize=(11, 8.5))
+            a.axis("off")
+            f.patch.set_facecolor("#f9f9f9")
+            f.text(0.5, 0.96, "Recommendation Details", ha="center",
+                   fontsize=16, fontweight="bold")
+            f.text(0.5, 0.93, f"Page {page_num} of {total_pages}",
+                   ha="center", fontsize=9, color="#888")
+            return f, a
+
+        # pre-calculate how many pages we need
+        pages_needed = []
+        current_page_recs = []
+        y_used = 0.0
+        available = 1.0 - 0.13 - MARGIN_BOTTOM  # top = 0.87 effective
+        for rec in recs:
+            h = _rec_height(rec)
+            if y_used + h > available and current_page_recs:
+                pages_needed.append(current_page_recs)
+                current_page_recs = []
+                y_used = 0.0
+            current_page_recs.append(rec)
+            y_used += h
+        if current_page_recs:
+            pages_needed.append(current_page_recs)
+        if not pages_needed:
+            pages_needed = [[]]
+
+        total_pages = len(pages_needed)
+        for page_num, chunk in enumerate(pages_needed, start=1):
+            fig, ax = _new_rec_page(page_num, total_pages)
             y = 0.87
             for rec in chunk:
                 priority = rec.get("priority", "medium")
@@ -1101,11 +1127,17 @@ def _generate_proposal_pdf(recs: list, all_trades: list, portfolio) -> bytes:
                 fig.text(0.05, y,
                          f"[{priority_map.get(priority, '')}] {rec.get('title', '')}",
                          fontsize=10, fontweight="bold", color=c)
-                y -= 0.04
-                fig.text(0.07, y, f"Action: {rec.get('action', '')}", fontsize=9, color="#333")
-                y -= 0.035
-                fig.text(0.07, y, f"Why: {rec.get('why', '')[:140]}", fontsize=8, color="#555")
-                y -= 0.055
+                y -= LINE_H
+
+                for line in textwrap.wrap(f"Action: {rec.get('action', '')}", width=95):
+                    fig.text(0.07, y, line, fontsize=9, color="#333")
+                    y -= LINE_H
+
+                for line in textwrap.wrap(f"Why: {rec.get('why', '')}", width=95):
+                    fig.text(0.07, y, line, fontsize=8, color="#555")
+                    y -= LINE_H
+
+                y -= 0.025  # gap between recommendations
 
             fig.text(0.05, 0.03, f"Digital Twin Investment Advisory System | {ts}",
                      fontsize=7, color="#aaaaaa")
