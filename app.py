@@ -1170,34 +1170,21 @@ def render_recommendations(recs: list):
             st.dataframe(trades_df)
 
     st.markdown("---")
-    col_pdf, col_txt = st.columns([1, 1])
-
-    with col_pdf:
-        if st.button("📄 Εξαγωγή PDF για Πελάτη"):
-            portfolio = st.session_state.get("portfolio")
-            with st.spinner("Δημιουργία PDF..."):
-                try:
-                    pdf_bytes = _generate_proposal_pdf(recs, all_trades, portfolio)
-                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-                    st.download_button(
-                        label="⬇️ Λήψη Trade Proposal PDF",
-                        data=pdf_bytes,
-                        file_name=f"trade_proposal_{ts}.pdf",
-                        mime="application/pdf",
-                    )
-                except Exception as e:
-                    st.error(f"Σφάλμα PDF: {e}")
-                    st.exception(e)
-
-    with col_txt:
-        if st.button("Εξαγωγή Προτάσεων (κείμενο)"):
-            text = EXPLAINER.explain_all_recommendations(recs)
-            st.download_button(
-                label="Λήψη recommendations.txt",
-                data=text,
-                file_name="recommendations.txt",
-                mime="text/plain",
-            )
+    if st.button("📄 Εξαγωγή PDF για Πελάτη"):
+        portfolio = st.session_state.get("portfolio")
+        with st.spinner("Δημιουργία PDF..."):
+            try:
+                pdf_bytes = _generate_proposal_pdf(recs, all_trades, portfolio)
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+                st.download_button(
+                    label="⬇️ Λήψη Trade Proposal PDF",
+                    data=pdf_bytes,
+                    file_name=f"trade_proposal_{ts}.pdf",
+                    mime="application/pdf",
+                )
+            except Exception as e:
+                st.error(f"Σφάλμα PDF: {e}")
+                st.exception(e)
 
 
 def _render_recommendation_card(rec: dict):
