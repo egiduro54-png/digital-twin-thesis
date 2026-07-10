@@ -995,6 +995,45 @@ def _render_alert_card(alert: dict):
 # Tab 4: Προτάσεις Αναδιάρθρωσης
 # ---------------------------------------------------------------------------
 
+def _consolidate_trades(trades: list, portfolio) -> list:
+    """
+    Merge duplicate ticker+action rows and cap SELLs to available holdings.
+    Multiple recommendations can independently generate SELL/BUY for the same
+    asset; this ensures the final trade list is executable.
+    """
+    holdings = {}
+    if portfolio:
+        holdings = {a.ticker: int(a.quantity) for a in portfolio.assets}
+
+    # Aggregate by (ticker, action)
+    agg: dict[tuple, dict] = {}
+    for t in trades:
+        key = (t["ticker"], t["action"])
+        if key not in agg:
+            agg[key] = {"quantity": 0, "price": t.get("price", 0.0)}
+        agg[key]["quantity"] += t.get("quantity", 0)
+
+    result = []
+    for (ticker, action), data in agg.items():
+        qty   = data["quantity"]
+        price = data["price"]
+        # Cap SELLs to what the portfolio actually holds
+        if action == "SELL" and ticker in holdings:
+            qty = min(qty, holdings[ticker])
+        if qty <= 0:
+            continue
+        result.append({
+            "ticker":   ticker,
+            "action":   action,
+            "quantity": qty,
+            "price":    price,
+            "value":    round(qty * price, 2),
+        })
+
+    # Sort: SELLs first, then BUYs
+    return sorted(result, key=lambda t: (0 if t["action"] == "SELL" else 1, t["ticker"]))
+
+
 def _generate_proposal_pdf(recs: list, all_trades: list, portfolio) -> bytes:
     """Generate a client-ready Trade Proposal PDF."""
     buf = io.BytesIO()
@@ -1182,7 +1221,9 @@ def render_recommendations(recs: list):
 
     st.markdown("---")
     st.subheader("Σύνοψη Συναλλαγών (Trade Summary)")
-    all_trades = [t for r in recs for t in r.get("trades", [])]
+    portfolio = st.session_state.get("portfolio")
+    raw_trades = [t for r in recs for t in r.get("trades", [])]
+    all_trades = _consolidate_trades(raw_trades, portfolio)
     if all_trades:
         sell_total = sum(t["value"] for t in all_trades if t.get("action") == "SELL")
         buy_total = sum(t["value"] for t in all_trades if t.get("action") == "BUY")
@@ -1209,7 +1250,6 @@ def render_recommendations(recs: list):
 
     st.markdown("---")
     if st.button("📄 Εξαγωγή PDF για Πελάτη"):
-        portfolio = st.session_state.get("portfolio")
         with st.spinner("Δημιουργία PDF..."):
             try:
                 pdf_bytes = _generate_proposal_pdf(recs, all_trades, portfolio)
