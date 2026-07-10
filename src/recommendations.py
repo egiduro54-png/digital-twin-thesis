@@ -330,14 +330,35 @@ class RecommendationEngine:
         shift_amount = pct_to_shift / 100.0 * total
 
         suggested_bond = self.BOND_ETFS[0]
+        bnd_price = 82.0
+        bnd_shares = int(shift_amount / bnd_price)
+        bnd_value = round(bnd_shares * bnd_price, 2)
 
-        trades = [{
-            "ticker": suggested_bond,
-            "action": "BUY",
-            "quantity": int(shift_amount / 82),  # approximate BND price
-            "price": 82.0,
-            "value": round(shift_amount, 2),
-        }]
+        # Find the largest equity asset to fund the bond purchase
+        equity_classes = {"Equity ETF", "Equity", "International Equity",
+                          "International ETF", "Emerging Markets ETF"}
+        eq_assets = [a for a in self.portfolio.assets if a.asset_class in equity_classes]
+        largest_eq = max(eq_assets, key=lambda a: a.current_value) if eq_assets else None
+
+        trades = []
+        if largest_eq and largest_eq.current_price > 0:
+            sell_shares = int(shift_amount / largest_eq.current_price)
+            sell_value  = round(sell_shares * largest_eq.current_price, 2)
+            trades.append({
+                "ticker":   largest_eq.ticker,
+                "action":   "SELL",
+                "quantity": sell_shares,
+                "price":    round(largest_eq.current_price, 2),
+                "value":    sell_value,
+            })
+
+        trades.append({
+            "ticker":   suggested_bond,
+            "action":   "BUY",
+            "quantity": bnd_shares,
+            "price":    bnd_price,
+            "value":    bnd_value,
+        })
 
         return [{
             "priority": "critical" if severity == "alert" else "high",
@@ -482,7 +503,21 @@ class RecommendationEngine:
         rp_labels = {"conservative": "Συντηρητικό", "moderate": "Μέτριο", "aggressive": "Επιθετικό"}
         rp_label = rp_labels.get(detail.get("risk_profile", ""), detail.get("risk_profile", ""))
 
+        # Build actual trades
+        equity_classes = {"Equity ETF", "Equity", "International Equity",
+                          "International ETF", "Emerging Markets ETF"}
+        bond_classes   = {"Bond ETF", "Fixed Income"}
+
+        eq_assets   = [a for a in self.portfolio.assets if a.asset_class in equity_classes]
+        bond_assets = [a for a in self.portfolio.assets if a.asset_class in bond_classes]
+        largest_eq  = max(eq_assets,   key=lambda a: a.current_value) if eq_assets   else None
+        largest_bond= max(bond_assets, key=lambda a: a.current_value) if bond_assets else None
+
+        trades = []
+        bnd_price = 82.0
+
         if eq_drift > 0:
+            # Too much equity → SELL equity, BUY bonds
             action_str = (f"Πώληση ${shift_amount:,.0f} μετοχών, "
                           f"αγορά ${shift_amount:,.0f} ομολόγων (BND) για αναλογία "
                           f"{target_eq:.0f}/{target_fi:.0f} μετοχές/ομόλογα")
@@ -491,7 +526,22 @@ class RecommendationEngine:
                 "Αυτό είναι πιο επιθετικό από το δηλωμένο προφίλ κινδύνου. "
                 "Η αναδιάρθρωση μειώνει τον κίνδυνο μεγάλης απώλειας σε πτώσεις αγοράς."
             )
+            if largest_eq and largest_eq.current_price > 0:
+                sell_shares = int(shift_amount / largest_eq.current_price)
+                trades.append({
+                    "ticker": largest_eq.ticker, "action": "SELL",
+                    "quantity": sell_shares,
+                    "price": round(largest_eq.current_price, 2),
+                    "value": round(sell_shares * largest_eq.current_price, 2),
+                })
+            bnd_shares = int(shift_amount / bnd_price)
+            trades.append({
+                "ticker": self.BOND_ETFS[0], "action": "BUY",
+                "quantity": bnd_shares, "price": bnd_price,
+                "value": round(bnd_shares * bnd_price, 2),
+            })
         else:
+            # Too little equity → SELL bonds, BUY equities
             action_str = (f"Μεταφορά ${shift_amount:,.0f} από ομόλογα σε μετοχές (SPY) "
                           f"για αναλογία {target_eq:.0f}/{target_fi:.0f} μετοχές/ομόλογα")
             why = (
@@ -499,13 +549,30 @@ class RecommendationEngine:
                 "Αυτό είναι πολύ συντηρητικό για το προφίλ σας, "
                 "μειώνοντας πιθανώς τις μακροπρόθεσμες αποδόσεις περιττά."
             )
+            if largest_bond and largest_bond.current_price > 0:
+                sell_shares = int(shift_amount / largest_bond.current_price)
+                trades.append({
+                    "ticker": largest_bond.ticker, "action": "SELL",
+                    "quantity": sell_shares,
+                    "price": round(largest_bond.current_price, 2),
+                    "value": round(sell_shares * largest_bond.current_price, 2),
+                })
+            spy_price = next(
+                (a.current_price for a in self.portfolio.assets if a.ticker == "SPY"), 450.0
+            )
+            spy_shares = int(shift_amount / spy_price)
+            trades.append({
+                "ticker": self.BROAD_MARKET_ETFS[0], "action": "BUY",
+                "quantity": spy_shares, "price": round(spy_price, 2),
+                "value": round(spy_shares * spy_price, 2),
+            })
 
         return [{
             "priority": "critical" if severity == "alert" else "high",
             "category": "Απόκλιση Προφίλ (Profile Drift)",
             "title": "Αναδιάρθρωση για Εναρμόνιση με Προφίλ Κινδύνου",
             "action": action_str,
-            "trades": [],
+            "trades": trades,
             "why": why,
             "impact": {
                 "before": {
