@@ -341,23 +341,29 @@ class RecommendationEngine:
         largest_eq = max(eq_assets, key=lambda a: a.current_value) if eq_assets else None
 
         trades = []
+        actual_sell_value = 0.0
         if largest_eq and largest_eq.current_price > 0:
-            sell_shares = int(shift_amount / largest_eq.current_price)
-            sell_value  = round(sell_shares * largest_eq.current_price, 2)
+            # Cap sell to available holdings
+            sell_shares = min(int(shift_amount / largest_eq.current_price),
+                              int(largest_eq.quantity))
+            actual_sell_value = round(sell_shares * largest_eq.current_price, 2)
             trades.append({
                 "ticker":   largest_eq.ticker,
                 "action":   "SELL",
                 "quantity": sell_shares,
                 "price":    round(largest_eq.current_price, 2),
-                "value":    sell_value,
+                "value":    actual_sell_value,
             })
 
+        # BUY only what the actual sell proceeds can fund
+        fund_amount = actual_sell_value if actual_sell_value > 0 else shift_amount
+        bnd_shares  = int(fund_amount / bnd_price)
         trades.append({
             "ticker":   suggested_bond,
             "action":   "BUY",
             "quantity": bnd_shares,
             "price":    bnd_price,
-            "value":    bnd_value,
+            "value":    round(bnd_shares * bnd_price, 2),
         })
 
         return [{
@@ -526,15 +532,19 @@ class RecommendationEngine:
                 "Αυτό είναι πιο επιθετικό από το δηλωμένο προφίλ κινδύνου. "
                 "Η αναδιάρθρωση μειώνει τον κίνδυνο μεγάλης απώλειας σε πτώσεις αγοράς."
             )
+            actual_eq_sell = 0.0
             if largest_eq and largest_eq.current_price > 0:
-                sell_shares = int(shift_amount / largest_eq.current_price)
+                sell_shares = min(int(shift_amount / largest_eq.current_price),
+                                  int(largest_eq.quantity))
+                actual_eq_sell = round(sell_shares * largest_eq.current_price, 2)
                 trades.append({
                     "ticker": largest_eq.ticker, "action": "SELL",
                     "quantity": sell_shares,
                     "price": round(largest_eq.current_price, 2),
-                    "value": round(sell_shares * largest_eq.current_price, 2),
+                    "value": actual_eq_sell,
                 })
-            bnd_shares = int(shift_amount / bnd_price)
+            fund_eq = actual_eq_sell if actual_eq_sell > 0 else shift_amount
+            bnd_shares = int(fund_eq / bnd_price)
             trades.append({
                 "ticker": self.BOND_ETFS[0], "action": "BUY",
                 "quantity": bnd_shares, "price": bnd_price,
@@ -549,18 +559,22 @@ class RecommendationEngine:
                 "Αυτό είναι πολύ συντηρητικό για το προφίλ σας, "
                 "μειώνοντας πιθανώς τις μακροπρόθεσμες αποδόσεις περιττά."
             )
+            actual_bond_sell = 0.0
             if largest_bond and largest_bond.current_price > 0:
-                sell_shares = int(shift_amount / largest_bond.current_price)
+                sell_shares = min(int(shift_amount / largest_bond.current_price),
+                                  int(largest_bond.quantity))
+                actual_bond_sell = round(sell_shares * largest_bond.current_price, 2)
                 trades.append({
                     "ticker": largest_bond.ticker, "action": "SELL",
                     "quantity": sell_shares,
                     "price": round(largest_bond.current_price, 2),
-                    "value": round(sell_shares * largest_bond.current_price, 2),
+                    "value": actual_bond_sell,
                 })
-            spy_price = next(
+            spy_price  = next(
                 (a.current_price for a in self.portfolio.assets if a.ticker == "SPY"), 450.0
             )
-            spy_shares = int(shift_amount / spy_price)
+            fund_spy   = actual_bond_sell if actual_bond_sell > 0 else shift_amount
+            spy_shares = int(fund_spy / spy_price)
             trades.append({
                 "ticker": self.BROAD_MARKET_ETFS[0], "action": "BUY",
                 "quantity": spy_shares, "price": round(spy_price, 2),
