@@ -997,9 +997,8 @@ def _render_alert_card(alert: dict):
 
 def _consolidate_trades(trades: list, portfolio) -> list:
     """
-    Merge duplicate ticker+action rows and cap SELLs to available holdings.
-    Multiple recommendations can independently generate SELL/BUY for the same
-    asset; this ensures the final trade list is executable.
+    Merge duplicate ticker+action rows, cap SELLs to holdings,
+    and scale BUYs so total BUY never exceeds total SELL proceeds.
     """
     holdings = {}
     if portfolio:
@@ -1013,25 +1012,37 @@ def _consolidate_trades(trades: list, portfolio) -> list:
             agg[key] = {"quantity": 0, "price": t.get("price", 0.0)}
         agg[key]["quantity"] += t.get("quantity", 0)
 
-    result = []
+    sells, buys = [], []
     for (ticker, action), data in agg.items():
         qty   = data["quantity"]
         price = data["price"]
-        # Cap SELLs to what the portfolio actually holds
-        if action == "SELL" and ticker in holdings:
-            qty = min(qty, holdings[ticker])
-        if qty <= 0:
-            continue
-        result.append({
-            "ticker":   ticker,
-            "action":   action,
-            "quantity": qty,
-            "price":    price,
-            "value":    round(qty * price, 2),
-        })
+        if action == "SELL":
+            if ticker in holdings:
+                qty = min(qty, holdings[ticker])
+            if qty > 0:
+                sells.append({"ticker": ticker, "action": "SELL",
+                               "quantity": qty, "price": price,
+                               "value": round(qty * price, 2)})
+        else:
+            if qty > 0:
+                buys.append({"ticker": ticker, "action": "BUY",
+                              "quantity": qty, "price": price,
+                              "value": round(qty * price, 2)})
 
-    # Sort: SELLs first, then BUYs
-    return sorted(result, key=lambda t: (0 if t["action"] == "SELL" else 1, t["ticker"]))
+    # Scale BUYs down if they exceed total sell proceeds
+    total_sell = sum(t["value"] for t in sells)
+    total_buy  = sum(t["value"] for t in buys)
+    if total_buy > total_sell > 0:
+        scale = total_sell / total_buy
+        scaled = []
+        for t in buys:
+            new_qty = max(1, int(t["quantity"] * scale))
+            scaled.append({"ticker": t["ticker"], "action": "BUY",
+                            "quantity": new_qty, "price": t["price"],
+                            "value": round(new_qty * t["price"], 2)})
+        buys = scaled
+
+    return sells + buys
 
 
 def _generate_proposal_pdf(recs: list, all_trades: list, portfolio) -> bytes:
