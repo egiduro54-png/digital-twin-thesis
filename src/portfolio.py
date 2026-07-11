@@ -196,7 +196,8 @@ class Portfolio:
 
         prices = self.historical_prices[available]
         p = prices.replace(0, np.nan)
-        self._returns = np.log(p / p.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
+        with np.errstate(invalid="ignore", divide="ignore"):
+            self._returns = np.log(p / p.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
         return self._returns
 
     def get_portfolio_daily_returns(self) -> pd.Series:
@@ -265,7 +266,8 @@ class Portfolio:
 
         market_prices = self.historical_prices[market_ticker]
         mp = market_prices.replace(0, np.nan)
-        market_ret = np.log(mp / mp.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
+        with np.errstate(invalid="ignore", divide="ignore"):
+            market_ret = np.log(mp / mp.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
 
         # Align on common dates
         common_idx = daily_ret.index.intersection(market_ret.index)
@@ -361,7 +363,8 @@ class Portfolio:
             if prices.empty:
                 continue
             pr = prices.replace(0, np.nan)
-            ret = np.log(pr / pr.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
+            with np.errstate(invalid="ignore", divide="ignore"):
+                ret = np.log(pr / pr.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
             common = daily_ret.index.intersection(ret.index)
             if len(common) > 20:
                 bench_parts.append(ret.loc[common] * weight)
