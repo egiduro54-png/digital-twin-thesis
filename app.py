@@ -958,22 +958,6 @@ def render_scenarios(portfolio, engine: ScenarioEngine):
     comparison = engine.compare_portfolio_metrics(active_id)
     _render_scenario_result(comparison, engine, active_id)
 
-    # Before vs after rebalance comparison
-    recs = st.session_state.get("recommendations") or []
-    if recs:
-        st.markdown("---")
-        try:
-            rebalanced = _build_rebalanced_portfolio(portfolio, recs)
-            if rebalanced is not None:
-                reb_engine = ScenarioEngine(rebalanced)
-                # Copy scenario from original engine if not built-in (e.g. custom)
-                if active_id not in reb_engine.scenarios and active_id in engine.scenarios:
-                    reb_engine.scenarios[active_id] = engine.scenarios[active_id]
-                reb_comparison = reb_engine.compare_portfolio_metrics(active_id)
-                _render_rebalance_comparison(comparison, reb_comparison)
-        except Exception as _e:
-            st.caption(f"Σύγκριση αναδιάρθρωσης μη διαθέσιμη: {_e}")
-
     st.markdown("---")
     st.subheader("Σύγκριση Πολλαπλών Σεναρίων")
     stress_ids = ["market_down_10", "market_down_20", "financial_crisis_2008",
