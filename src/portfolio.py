@@ -340,8 +340,6 @@ class Portfolio:
         Benchmark: blended ACWI + AGG per profile weights
         Benchmark: MSCI ACWI + Bloomberg Euro Aggregate proxy (AGG)
         """
-        import yfinance as yf
-
         daily_ret = self.get_portfolio_daily_returns()
         if daily_ret.empty or len(daily_ret) < 20:
             return float("nan")
@@ -353,16 +351,7 @@ class Portfolio:
         def _get_prices(ticker: str) -> pd.Series:
             if ticker in self.historical_prices.columns:
                 return self.historical_prices[ticker]
-            try:
-                raw = yf.download(ticker, period="5y", auto_adjust=True, progress=False)
-                if isinstance(raw.columns, pd.MultiIndex):
-                    raw = raw["Close"]
-                    if ticker in raw.columns:
-                        return raw[ticker].dropna()
-                    return raw.iloc[:, 0].dropna()
-                return raw["Close"].dropna()
-            except Exception:
-                return pd.Series(dtype=float)
+            return pd.Series(dtype=float)
 
         bench_parts = []
         for ticker, weight in [("ACWI", acwi_w), ("AGG", agg_w)]:

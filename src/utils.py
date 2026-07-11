@@ -14,9 +14,9 @@ import pandas as pd
 
 from .data_loader import (
     load_portfolio_csv,
-    fetch_current_prices,
     fetch_historical_data,
-    fetch_ticker_info,
+    SECTOR_FALLBACK,
+    ASSET_CLASS_FALLBACK,
 )
 from .portfolio import Portfolio, Asset
 
@@ -54,35 +54,45 @@ def build_portfolio(
     name = portfolio_name or Path(csv_path).stem.replace("_", " ").title()
     logger.info("Building portfolio '%s' with %d holdings", name, len(tickers))
 
-    # 2. Fetch current prices
-    current_prices = fetch_current_prices(tickers)
-
-    # 3. Fetch historical data
+    # 2. Single batch download of historical data (replaces 20+ individual API calls)
     historical = fetch_historical_data(tickers, years=history_years)
 
-    # 4. Fetch ticker metadata (sector, asset class, etc.)
-    info = fetch_ticker_info(tickers)
+    # 3. Use last close from historical data as current price — avoids 10 extra requests
+    last_closes: dict[str, float] = {}
+    if not historical.empty:
+        last_row = historical.iloc[-1]
+        last_closes = {t: float(last_row[t]) for t in tickers if t in last_row.index}
+
+    # 4. Build metadata from static fallback tables — avoids 10 .info requests
+    def _meta(ticker: str) -> dict:
+        return {
+            "name": ticker,
+            "sector": SECTOR_FALLBACK.get(ticker, "Unknown"),
+            "industry": "Unknown",
+            "asset_class": ASSET_CLASS_FALLBACK.get(ticker, "Equity"),
+            "country": "US",
+        }
 
     # 5. Build Asset objects
     assets = []
     for _, row in df.iterrows():
         ticker = row["ticker"]
-        price = current_prices.get(ticker, float("nan"))
+        price = last_closes.get(ticker, float("nan"))
         if np.isnan(price):
             logger.warning("Using entry_price for %s (no live price available)", ticker)
-            price = row["entry_price"]
+            price = float(row["entry_price"])
 
-        meta = info.get(ticker, {})
+        meta = _meta(ticker)
         asset = Asset(
             ticker=ticker,
             quantity=float(row["quantity"]),
             entry_price=float(row["entry_price"]),
             current_price=float(price),
-            name=meta.get("name", ticker),
-            sector=meta.get("sector", "Unknown"),
-            industry=meta.get("industry", "Unknown"),
-            asset_class=meta.get("asset_class", "Equity"),
-            country=meta.get("country", "Unknown"),
+            name=meta["name"],
+            sector=meta["sector"],
+            industry=meta["industry"],
+            asset_class=meta["asset_class"],
+            country=meta["country"],
         )
         assets.append(asset)
 

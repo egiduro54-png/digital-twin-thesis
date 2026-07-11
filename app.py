@@ -147,7 +147,7 @@ def _load_portfolio(csv_path: str, risk_profile: str, name: str):
                 csv_path=csv_path,
                 risk_profile=risk_profile,
                 portfolio_name=name,
-                history_years=5,
+                history_years=3,
             )
         except Exception as exc:
             st.error(f"Αποτυχία φόρτωσης χαρτοφυλακίου: {exc}")
