@@ -11,17 +11,13 @@ import json
 import logging
 import datetime
 from pathlib import Path
-
 import math
 import textwrap
-import numpy as np
-import pandas as pd
+
 import streamlit as st
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 
 # ---------------------------------------------------------------------------
-# Page config
+# Page config — must come first so errors can be shown on screen
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="Digital Twin Investment Advisory System",
@@ -29,6 +25,31 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Heavy imports after set_page_config so any crash is visible on screen
+_import_errors = []
+try:
+    import numpy as np
+except Exception as _e:
+    _import_errors.append(f"numpy: {_e}")
+    np = None
+try:
+    import pandas as pd
+except Exception as _e:
+    _import_errors.append(f"pandas: {_e}")
+    pd = None
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+except Exception as _e:
+    _import_errors.append(f"matplotlib: {_e}")
+    plt = None
+
+if _import_errors:
+    st.error("Crash during package import:")
+    for err in _import_errors:
+        st.code(err)
+    st.stop()
 
 # Project modules — imported after set_page_config so errors appear on screen
 _import_errors = []
