@@ -20,20 +20,6 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-# Project modules
-from src.utils import build_portfolio, format_currency, format_pct, format_ratio
-from src.utils import severity_color, severity_emoji, priority_color, setup_logging
-from src.risk_monitor import RiskMonitor
-from src.scenario_engine import ScenarioEngine
-from src.recommendations import RecommendationEngine
-from src.explainer import Explainer
-from src.validation import (
-    ValidationExperiment,
-    ValidationResults,
-    PORTFOLIO_ARCHETYPES,
-)
-from src.regulatory import RegulatoryChecker
-
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -44,7 +30,46 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Project modules — imported after set_page_config so errors appear on screen
+_import_errors = []
+try:
+    from src.utils import build_portfolio, format_currency, format_pct, format_ratio
+    from src.utils import severity_color, severity_emoji, priority_color, setup_logging
+except Exception as _e:
+    _import_errors.append(f"src.utils: {_e}")
+try:
+    from src.risk_monitor import RiskMonitor
+except Exception as _e:
+    _import_errors.append(f"src.risk_monitor: {_e}")
+try:
+    from src.scenario_engine import ScenarioEngine
+except Exception as _e:
+    _import_errors.append(f"src.scenario_engine: {_e}")
+try:
+    from src.recommendations import RecommendationEngine
+except Exception as _e:
+    _import_errors.append(f"src.recommendations: {_e}")
+try:
+    from src.explainer import Explainer
+except Exception as _e:
+    _import_errors.append(f"src.explainer: {_e}")
+try:
+    from src.validation import ValidationExperiment, ValidationResults, PORTFOLIO_ARCHETYPES
+except Exception as _e:
+    _import_errors.append(f"src.validation: {_e}")
+try:
+    from src.regulatory import RegulatoryChecker
+except Exception as _e:
+    _import_errors.append(f"src.regulatory: {_e}")
+
+if _import_errors:
+    st.error("Import errors detected:")
+    for err in _import_errors:
+        st.code(err)
+    st.stop()
+
 setup_logging("WARNING")
+import logging
 logger = logging.getLogger(__name__)
 
 EXPLAINER = Explainer()
