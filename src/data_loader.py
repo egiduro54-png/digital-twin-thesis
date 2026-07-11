@@ -180,7 +180,8 @@ def calculate_returns(prices: pd.DataFrame, method: str = "log") -> pd.DataFrame
     method='simple' → simple returns
     """
     if method == "log":
-        return np.log(prices / prices.shift(1)).dropna()
+        p = prices.replace(0, np.nan)
+        return np.log(p / p.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
     return prices.pct_change().dropna()
 
 
