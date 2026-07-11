@@ -24,8 +24,6 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
-from scipy import stats
-from sklearn.metrics import precision_recall_fscore_support
 
 from .data_loader import fetch_historical_data
 from .portfolio import Portfolio, Asset
@@ -581,6 +579,8 @@ class ValidationResults:
 
         fragile_threshold: portfolios with actual_drawdown < this are "fragile"
         """
+        from scipy import stats
+        from sklearn.metrics import precision_recall_fscore_support
         # Remove NaN entries
         valid = [
             (b, p, d, r)
