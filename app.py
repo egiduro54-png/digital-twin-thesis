@@ -807,17 +807,12 @@ def render_scenarios(portfolio, engine: ScenarioEngine):
             rate_change=custom_rate,
             volatility_multiplier=custom_vol,
         )
-        active_id = list(engine.scenarios.keys())[-1]
-        comparison = engine.compare_portfolio_metrics(active_id)
-        _render_scenario_result(comparison, engine, active_id)
+        custom_id = list(engine.scenarios.keys())[-1]
+        comparison = engine.compare_portfolio_metrics(custom_id)
+        _render_scenario_result(comparison, engine, custom_id)
     else:
-        active_id = selected_id
-        comparison = engine.compare_portfolio_metrics(active_id)
-        _render_scenario_result(comparison, engine, active_id)
-
-    st.markdown("---")
-    with st.expander("Σύγκριση: Τρέχον vs Αναδιαρθρωμένο υπό το Σενάριο", expanded=False):
-        _render_rebalance_comparison_under_scenario(portfolio, engine, active_id)
+        comparison = engine.compare_portfolio_metrics(selected_id)
+        _render_scenario_result(comparison, engine, selected_id)
 
     st.markdown("---")
     st.subheader("Σύγκριση Πολλαπλών Σεναρίων")
@@ -926,90 +921,6 @@ def _render_multi_scenario_table(multi: dict):
     st.dataframe(pd.DataFrame(rows))
 
 
-def _render_rebalance_comparison_under_scenario(portfolio, engine, scenario_id: str):
-    """Show side-by-side: current portfolio vs rebalanced portfolio under the same scenario."""
-    recs = st.session_state.get("recommendations")
-    if not recs:
-        st.info("Δεν υπάρχουν ακόμα προτάσεις αναδιάρθρωσης. Ανοίξτε πρώτα την καρτέλα Προτάσεις.")
-        return
-
-    reb_portfolio = _build_rebalanced_portfolio(portfolio, recs)
-    if reb_portfolio is None:
-        st.info("Δεν υπάρχουν εφαρμόσιμες συναλλαγές από τις προτάσεις.")
-        return
-
-    reb_engine = ScenarioEngine(reb_portfolio, engine.scenarios)
-
-    curr_cmp = engine.compare_portfolio_metrics(scenario_id)
-    reb_cmp = reb_engine.compare_portfolio_metrics(scenario_id)
-
-    curr_s = curr_cmp["summary"]
-    reb_s = reb_cmp["summary"]
-
-    curr_val = curr_s["scenario_total_value"]
-    reb_val = reb_s["scenario_total_value"]
-    improvement = reb_val - curr_val
-    improvement_pct = (improvement / abs(curr_val) * 100) if curr_val != 0 else 0.0
-    curr_loss = curr_s["portfolio_change_pct"]
-    reb_loss = reb_s["portfolio_change_pct"]
-
-    st.subheader("Σύγκριση: Τρέχον vs Αναδιαρθρωμένο Χαρτοφυλάκιο")
-    st.caption(
-        f"Τρέχουσα αξία: **{format_currency(curr_s['current_total_value'])}** → "
-        f"Μετά αναδιάρθρωση: **{format_currency(reb_s['current_total_value'])}** | "
-        f"Σενάριο: {curr_cmp['scenario_name']}"
-    )
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric(
-        "Τρέχον — Αξία στο Σενάριο",
-        format_currency(curr_val),
-        delta=format_pct(curr_loss, show_sign=True),
-        delta_color="normal" if curr_loss >= 0 else "inverse",
-    )
-    c2.metric(
-        "Αναδιαρθρωμένο — Αξία στο Σενάριο",
-        format_currency(reb_val),
-        delta=format_pct(reb_loss, show_sign=True),
-        delta_color="normal" if reb_loss >= 0 else "inverse",
-    )
-    c3.metric(
-        "Διαφορά (Αναδιαρθρωμένο − Τρέχον)",
-        format_currency(improvement),
-        delta=format_pct(improvement_pct, show_sign=True),
-        delta_color="normal" if improvement >= 0 else "inverse",
-        help="Θετικό σημαίνει ότι το αναδιαρθρωμένο χαρτοφυλάκιο έχει μεγαλύτερη αξία υπό το σενάριο.",
-    )
-
-    metric_display = {
-        "volatility_annual_pct": "Volatility (%)",
-        "sharpe_ratio": "Sharpe Ratio",
-        "max_drawdown_pct": "Max Drawdown (%)",
-        "beta": "Beta",
-        "var_95_monthly_pct": "VaR 95% μηνιαίο (%)",
-    }
-
-    rows = []
-    for key, label in metric_display.items():
-        cm = curr_cmp["metrics"].get(key, {})
-        rm = reb_cmp["metrics"].get(key, {})
-        c_base = cm.get("current")
-        c_scen = cm.get("scenario")
-        r_base = rm.get("current")
-        r_scen = rm.get("scenario")
-        delta = (r_scen - c_scen) if (c_scen is not None and r_scen is not None) else None
-        rows.append({
-            "Δείκτης": label,
-            "Τρέχον — Βάση": f"{c_base:,.2f}" if c_base is not None else "N/A",
-            "Τρέχον — Σενάριο": f"{c_scen:,.2f}" if c_scen is not None else "N/A",
-            "Αναδιαρθρ. — Βάση": f"{r_base:,.2f}" if r_base is not None else "N/A",
-            "Αναδιαρθρ. — Σενάριο": f"{r_scen:,.2f}" if r_scen is not None else "N/A",
-            "Βελτίωση": f"{delta:+,.2f}" if delta is not None else "N/A",
-        })
-
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
-
-
 # ---------------------------------------------------------------------------
 # Tab 3: Παρακολούθηση Κινδύνου
 # ---------------------------------------------------------------------------
@@ -1083,65 +994,6 @@ def _render_alert_card(alert: dict):
 # ---------------------------------------------------------------------------
 # Tab 4: Προτάσεις Αναδιάρθρωσης
 # ---------------------------------------------------------------------------
-
-def _build_rebalanced_portfolio(portfolio, recs):
-    """Apply recommended trades to current portfolio and return a rebalanced copy."""
-    import copy
-    from src.portfolio import Asset, Portfolio
-
-    raw_trades = [t for r in recs for t in r.get("trades", [])]
-    trades = _consolidate_trades(raw_trades, portfolio)
-    if not trades:
-        return None
-
-    assets_by_ticker = {a.ticker: copy.copy(a) for a in portfolio.assets}
-
-    bond_etfs = {"BND", "TLT", "IEF", "SHY", "AGG", "LQD", "HYG", "VCIT", "VCSH"}
-    intl_etfs = {"VXUS", "EFA", "IEMG"}
-    commodity_etfs = {"GLD", "SLV", "GSG"}
-
-    for trade in trades:
-        ticker = trade["ticker"]
-        qty = trade["quantity"]
-        price = trade["price"]
-        if trade["action"] == "SELL":
-            if ticker in assets_by_ticker:
-                assets_by_ticker[ticker].quantity = max(0.0, assets_by_ticker[ticker].quantity - qty)
-        elif trade["action"] == "BUY":
-            if ticker in assets_by_ticker:
-                assets_by_ticker[ticker].quantity += qty
-            else:
-                if ticker in bond_etfs:
-                    ac, sector = "Fixed Income", "Bond ETF"
-                elif ticker in intl_etfs:
-                    ac, sector = "International Equity", "International ETF"
-                elif ticker in commodity_etfs:
-                    ac, sector = "Commodity", "Commodities ETF"
-                else:
-                    ac, sector = "Equity", "Equity ETF"
-                assets_by_ticker[ticker] = Asset(
-                    ticker=ticker,
-                    quantity=float(qty),
-                    entry_price=price,
-                    current_price=price,
-                    name=ticker,
-                    sector=sector,
-                    industry="Unknown",
-                    asset_class=ac,
-                    country="US",
-                )
-
-    new_assets = [a for a in assets_by_ticker.values() if a.quantity > 0]
-    if not new_assets:
-        return None
-
-    return Portfolio(
-        assets=new_assets,
-        historical_prices=portfolio.historical_prices,
-        risk_profile=portfolio.risk_profile,
-        name=f"{portfolio.name} (Αναδιαρθρωμένο)",
-    )
-
 
 def _consolidate_trades(trades: list, portfolio) -> list:
     """
