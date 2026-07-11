@@ -38,13 +38,6 @@ try:
 except Exception as _e:
     _import_errors.append(f"pandas: {_e}")
     pd = None
-try:
-    import matplotlib.pyplot as plt
-    from matplotlib.backends.backend_pdf import PdfPages
-except Exception as _e:
-    _import_errors.append(f"matplotlib: {_e}")
-    plt = None
-
 if _import_errors:
     st.error("Crash during package import:")
     for err in _import_errors:
@@ -550,6 +543,7 @@ def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
 
 def _plot_correlation_heatmap(portfolio):
     """Render a colour-coded correlation matrix for portfolio assets."""
+    import matplotlib.pyplot as plt
     corr = portfolio.calculate_correlation_matrix()
     if corr.empty or corr.shape[0] < 2:
         st.info("Χρειάζονται τουλάχιστον 2 τίτλοι με ιστορικά δεδομένα για τον πίνακα συσχέτισης.")
@@ -617,6 +611,7 @@ def _plot_correlation_heatmap(portfolio):
 
 
 def _plot_composition(composition: dict):
+    import matplotlib.pyplot as plt
     by_class = composition.get("by_asset_class", {})
     if not by_class:
         st.info("Δεν υπάρχουν αρκετά δεδομένα για γράφημα σύνθεσης.")
@@ -651,7 +646,8 @@ def _plot_composition(composition: dict):
 # ---------------------------------------------------------------------------
 
 def _generate_scenario_pdf(comparison: dict, impacts: list[dict]) -> bytes:
-    """Generate scenario PDF using matplotlib (ASCII labels only for font compatibility)."""
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
     buf = io.BytesIO()
     params = comparison["scenario_params"]
     summary = comparison["summary"]
@@ -1190,7 +1186,8 @@ def _consolidate_trades(trades: list, portfolio) -> list:
 
 
 def _generate_proposal_pdf(recs: list, all_trades: list, portfolio) -> bytes:
-    """Generate a client-ready Trade Proposal PDF."""
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
     buf = io.BytesIO()
     ts = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
     port_name = portfolio.name if portfolio else "Portfolio"
@@ -2422,7 +2419,7 @@ def _val_metric_card(label: str, baseline_val, proposed_val,
 
 
 def _plot_scatter_comparison(results: ValidationResults):
-    """Scatter plot: predicted risk score vs actual drawdown, both systems."""
+    import matplotlib.pyplot as plt
     import numpy as np
 
     valid_mask = [
@@ -2500,7 +2497,7 @@ def _plot_scatter_comparison(results: ValidationResults):
 
 
 def _plot_precision_recall_bar(results: ValidationResults):
-    """Bar chart comparing precision, recall, F1 between baseline and proposed."""
+    import matplotlib.pyplot as plt
     fd = results.metrics.get("fragile_detection", {})
 
     labels = ["Precision", "Recall", "F1-Score"]
@@ -2546,7 +2543,7 @@ def _plot_precision_recall_bar(results: ValidationResults):
 
 
 def _plot_risk_rank_comparison(results: ValidationResults):
-    """Visualize how risk rankings compare between the two systems and ground truth."""
+    import matplotlib.pyplot as plt
     import numpy as np
 
     valid_idx = [
@@ -2823,6 +2820,7 @@ def render_validation():
         st.markdown("---")
         st.markdown("### 📈 Οπτικοποίηση Αποτελεσμάτων")
 
+        import matplotlib.pyplot as plt
         vtab1, vtab2, vtab3 = st.tabs([
             "🎯 Risk Score vs Actual Drawdown",
             "📊 Precision / Recall / F1",

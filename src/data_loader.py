@@ -17,7 +17,6 @@ from typing import Optional
 
 import pandas as pd
 import numpy as np
-import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +107,7 @@ def load_portfolio_csv(file_path: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def fetch_current_prices(tickers: list[str]) -> dict[str, float]:
-    """
-    Fetch the latest closing price for each ticker via yfinance.
-
-    Returns a dict: {ticker: price}.
-    If a ticker cannot be fetched, its price will be NaN and a warning logged.
-    """
+    import yfinance as yf
     prices = {}
     for ticker in tickers:
         try:
@@ -136,12 +130,7 @@ def fetch_historical_data(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    """
-    Download adjusted closing prices for *tickers* covering *years* of history.
-
-    Returns a DataFrame where columns are tickers and index is Date.
-    Missing tickers / days are forward-filled then back-filled.
-    """
+    import yfinance as yf
     if end_date is None:
         end_date = datetime.today().strftime("%Y-%m-%d")
     if start_date is None:
@@ -191,12 +180,7 @@ def calculate_returns(prices: pd.DataFrame, method: str = "log") -> pd.DataFrame
 # ---------------------------------------------------------------------------
 
 def fetch_ticker_info(tickers: list[str]) -> dict[str, dict]:
-    """
-    Retrieve sector, industry, asset class, and country for each ticker.
-
-    Falls back to SECTOR_FALLBACK / ASSET_CLASS_FALLBACK for common ETFs.
-    Returns dict: {ticker: {sector, industry, asset_class, country, name}}
-    """
+    import yfinance as yf
     info_map = {}
     for ticker in tickers:
         meta = {
