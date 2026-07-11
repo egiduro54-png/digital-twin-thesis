@@ -806,17 +806,12 @@ def render_scenarios(portfolio, engine: ScenarioEngine):
             rate_change=custom_rate,
             volatility_multiplier=custom_vol,
         )
-        active_id = list(engine.scenarios.keys())[-1]
-        comparison = engine.compare_portfolio_metrics(active_id)
-        _render_scenario_result(comparison, engine, active_id)
+        custom_id = list(engine.scenarios.keys())[-1]
+        comparison = engine.compare_portfolio_metrics(custom_id)
+        _render_scenario_result(comparison, engine, custom_id)
     else:
-        active_id = selected_id
-        comparison = engine.compare_portfolio_metrics(active_id)
-        _render_scenario_result(comparison, engine, active_id)
-
-    st.markdown("---")
-    with st.expander("Σύγκριση: Τρέχον vs Αναδιαρθρωμένο υπό το Σενάριο", expanded=False):
-        _render_rebalance_comparison_under_scenario(portfolio, engine, active_id)
+        comparison = engine.compare_portfolio_metrics(selected_id)
+        _render_scenario_result(comparison, engine, selected_id)
 
     st.markdown("---")
     st.subheader("Σύγκριση Πολλαπλών Σεναρίων")
