@@ -966,6 +966,9 @@ def render_scenarios(portfolio, engine: ScenarioEngine):
             rebalanced = _build_rebalanced_portfolio(portfolio, recs)
             if rebalanced is not None:
                 reb_engine = ScenarioEngine(rebalanced)
+                # Copy scenario from original engine if not built-in (e.g. custom)
+                if active_id not in reb_engine.scenarios and active_id in engine.scenarios:
+                    reb_engine.scenarios[active_id] = engine.scenarios[active_id]
                 reb_comparison = reb_engine.compare_portfolio_metrics(active_id)
                 _render_rebalance_comparison(comparison, reb_comparison)
         except Exception as _e:
