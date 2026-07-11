@@ -78,11 +78,6 @@ try:
     from src.validation import ValidationExperiment, ValidationResults, PORTFOLIO_ARCHETYPES
 except Exception as _e:
     _import_errors.append(f"src.validation: {_e}")
-try:
-    from src.regulatory import RegulatoryChecker
-except Exception as _e:
-    _import_errors.append(f"src.regulatory: {_e}")
-
 if _import_errors:
     st.error("Import errors detected:")
     for err in _import_errors:
@@ -815,6 +810,109 @@ def _generate_scenario_pdf(comparison: dict, impacts: list[dict]) -> bytes:
     return buf.read()
 
 
+def _build_rebalanced_portfolio(portfolio, recs: list):
+    """Build a copy of portfolio with the recommendations' trades applied."""
+    import copy
+    from src.portfolio import Asset, Portfolio as _Portfolio
+
+    raw_trades = [t for r in recs for t in r.get("trades", [])]
+    trades = _consolidate_trades(raw_trades, portfolio)
+    if not trades:
+        return None
+
+    bond_etfs = {"BND", "TLT", "IEF", "SHY", "AGG", "LQD", "HYG", "VCIT", "VCSH"}
+    intl_etfs = {"VXUS", "EFA", "IEMG"}
+    commodity_etfs = {"GLD", "SLV", "GSG"}
+
+    assets_by_ticker = {a.ticker: copy.copy(a) for a in portfolio.assets}
+    for trade in trades:
+        ticker = trade["ticker"]
+        qty = trade["quantity"]
+        price = trade["price"]
+        if trade["action"] == "SELL":
+            if ticker in assets_by_ticker:
+                assets_by_ticker[ticker].quantity = max(0.0, assets_by_ticker[ticker].quantity - qty)
+        elif trade["action"] == "BUY":
+            if ticker in assets_by_ticker:
+                assets_by_ticker[ticker].quantity += qty
+            else:
+                if ticker in bond_etfs:
+                    ac, sector = "Fixed Income", "Bond ETF"
+                elif ticker in intl_etfs:
+                    ac, sector = "International Equity", "International ETF"
+                elif ticker in commodity_etfs:
+                    ac, sector = "Commodity", "Commodities ETF"
+                else:
+                    ac, sector = "Equity", "Equity ETF"
+                assets_by_ticker[ticker] = Asset(
+                    ticker=ticker, quantity=float(qty),
+                    entry_price=price, current_price=price,
+                    name=ticker, sector=sector,
+                    industry="Unknown", asset_class=ac, country="US",
+                )
+
+    new_assets = [a for a in assets_by_ticker.values() if a.quantity > 0]
+    if not new_assets:
+        return None
+    return _Portfolio(
+        assets=new_assets,
+        historical_prices=portfolio.historical_prices,
+        risk_profile=portfolio.risk_profile,
+        name=f"{portfolio.name} (Αναδιαρθρωμένο)",
+    )
+
+
+def _render_rebalance_comparison(before_cmp: dict, after_cmp: dict):
+    """Side-by-side current vs rebalanced portfolio under the same scenario."""
+    b_sum = before_cmp.get("summary", {})
+    a_sum = after_cmp.get("summary", {})
+    b_met = before_cmp.get("metrics", {})
+    a_met = after_cmp.get("metrics", {})
+
+    st.subheader("Αναδιαρθρωμένο Χαρτοφυλάκιο: Σύγκριση στο ίδιο Σενάριο")
+    st.caption(
+        "Πώς θα αντεπεξερχόταν το αναδιαρθρωμένο χαρτοφυλάκιο (εφόσον εφαρμοστούν "
+        "οι προτάσεις) υπό τις ίδιες συνθήκες σεναρίου."
+    )
+
+    c1, c2 = st.columns(2)
+    b_val = b_sum.get("scenario_total_value")
+    a_val = a_sum.get("scenario_total_value")
+    b_chg = b_sum.get("portfolio_change_pct", 0)
+    a_chg = a_sum.get("portfolio_change_pct", 0)
+    c1.metric("Τρέχον — Αξία στο Σενάριο",
+              format_currency(b_val) if b_val is not None else "N/A",
+              f"{b_chg:+.1f}%")
+    improvement = a_chg - b_chg
+    c2.metric("Αναδιαρθρωμένο — Αξία στο Σενάριο",
+              format_currency(a_val) if a_val is not None else "N/A",
+              f"{a_chg:+.1f}% ({improvement:+.1f}% vs τρέχον)",
+              delta_color="normal" if improvement >= 0 else "inverse")
+
+    compare_defs = [
+        ("volatility_annual_pct", "Μεταβλητότητα (%)", False),
+        ("sharpe_ratio", "Sharpe Ratio", True),
+        ("max_drawdown_pct", "Max Drawdown (%)", True),
+        ("var_95_monthly_pct", "VaR 95% μηνιαίο (%)", True),
+    ]
+    rows = []
+    for key, label, higher_better in compare_defs:
+        b = b_met.get(key, {}).get("scenario")
+        a = a_met.get(key, {}).get("scenario")
+        if b is None or a is None:
+            continue
+        diff = a - b
+        better = (diff > 0) == higher_better
+        rows.append({
+            "Δείκτης": label,
+            "Τρέχον": f"{b:,.2f}",
+            "Αναδιαρθρωμένο": f"{a:,.2f}",
+            "Διαφορά": f"{diff:+.2f} {'✅' if better else '⚠️'}",
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows))
+
+
 def render_scenarios(portfolio, engine: ScenarioEngine):
     st.header("Ανάλυση Σεναρίων — What-If Προσομοίωση")
     st.markdown(
@@ -853,12 +951,25 @@ def render_scenarios(portfolio, engine: ScenarioEngine):
             rate_change=custom_rate,
             volatility_multiplier=custom_vol,
         )
-        custom_id = list(engine.scenarios.keys())[-1]
-        comparison = engine.compare_portfolio_metrics(custom_id)
-        _render_scenario_result(comparison, engine, custom_id)
+        active_id = list(engine.scenarios.keys())[-1]
     else:
-        comparison = engine.compare_portfolio_metrics(selected_id)
-        _render_scenario_result(comparison, engine, selected_id)
+        active_id = selected_id
+
+    comparison = engine.compare_portfolio_metrics(active_id)
+    _render_scenario_result(comparison, engine, active_id)
+
+    # Before vs after rebalance comparison
+    recs = st.session_state.get("recommendations") or []
+    if recs:
+        st.markdown("---")
+        try:
+            rebalanced = _build_rebalanced_portfolio(portfolio, recs)
+            if rebalanced is not None:
+                reb_engine = ScenarioEngine(rebalanced)
+                reb_comparison = reb_engine.compare_portfolio_metrics(active_id)
+                _render_rebalance_comparison(comparison, reb_comparison)
+        except Exception as _e:
+            st.caption(f"Σύγκριση αναδιάρθρωσης μη διαθέσιμη: {_e}")
 
     st.markdown("---")
     st.subheader("Σύγκριση Πολλαπλών Σεναρίων")
@@ -2220,7 +2331,7 @@ def render_whatif(portfolio):
             "Προτεινόμενο Βάρος (%)": f"{new_weights_norm[ticker] * 100:.1f}%",
             "Διαφορά (%)": f"{(new_weights_norm[ticker] - current_weights[ticker]) * 100:+.1f}%",
         })
-    st.dataframe(pd.DataFrame(weight_rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(weight_rows))
 
     # Cumulative return chart
     st.subheader("Ιστορική Εξέλιξη (Cumulative Return)")
@@ -2247,87 +2358,6 @@ def render_whatif(portfolio):
         })
         st.line_chart(chart_df)
         st.caption("Σωρευτική απόδοση (%) βασισμένη σε ιστορικά δεδομένα με τα νέα βάρη.")
-
-
-# ---------------------------------------------------------------------------
-# Tab 6: Regulatory Compliance
-# ---------------------------------------------------------------------------
-
-def render_regulatory(portfolio):
-    st.header("Regulatory Compliance — MiFID II / PRIIPs")
-    st.markdown(
-        "Αξιολόγηση συμμόρφωσης χαρτοφυλακίου με το κανονιστικό πλαίσιο "
-        "MiFID II (καταλληλότητα) και PRIIPs (δείκτης κινδύνου SRI)."
-    )
-
-    checker = RegulatoryChecker(portfolio)
-    report = checker.run_all_checks()
-    summary = report.summary()
-
-    # Overall status banner
-    status_colors = {"PASS": "#28a745", "WARNING": "#ffc107", "BREACH": "#dc3545"}
-    status_labels = {"PASS": "✅ ΣΥΜΜΟΡΦΩΜΕΝΟ", "WARNING": "⚠️ ΠΡΟΕΙΔΟΠΟΙΗΣΗ", "BREACH": "🚨 ΠΑΡΑΒΑΣΗ"}
-    color = status_colors[report.overall_status]
-    label = status_labels[report.overall_status]
-
-    st.markdown(
-        f"<div style='background:{color};color:white;padding:16px 20px;"
-        f"border-radius:8px;font-size:1.2rem;font-weight:bold;margin-bottom:16px'>"
-        f"{label}</div>",
-        unsafe_allow_html=True,
-    )
-
-    # Summary metrics
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Συνολικοί Έλεγχοι", summary["total"])
-    c2.metric("✅ PASS", summary["passes"])
-    c3.metric("⚠️ WARNING", summary["warnings"])
-    c4.metric("🚨 BREACH", summary["breaches"])
-
-    # PRIIPs SRI Score
-    st.markdown("---")
-    sri = report.sri_score
-    sri_descriptions = {
-        0: "Μη υπολογίσιμο",
-        1: "Πολύ Χαμηλός", 2: "Χαμηλός", 3: "Μέτρια Χαμηλός",
-        4: "Μέτριος", 5: "Μέτρια Υψηλός", 6: "Υψηλός", 7: "Πολύ Υψηλός",
-    }
-    sri_color = ["#gray","#00b050","#00b050","#92d050","#ffff00","#ff9900","#ff0000","#c00000"]
-    st.subheader("PRIIPs Synthetic Risk Indicator (SRI)")
-    sri_cols = st.columns(7)
-    for i, col in enumerate(sri_cols, start=1):
-        bg = "#2c3e50" if i == sri else "#ecf0f1"
-        fc = "white" if i == sri else "#666"
-        col.markdown(
-            f"<div style='background:{bg};color:{fc};text-align:center;"
-            f"padding:12px 4px;border-radius:6px;font-weight:bold;font-size:1.1rem'>"
-            f"{i}</div>",
-            unsafe_allow_html=True,
-        )
-    st.caption(f"SRI {sri}/7 — {sri_descriptions.get(sri, '')}  |  Βασίζεται στην ιστορική μεταβλητότητα (PRIIPs Regulation EU 1286/2014)")
-
-    # Individual checks
-    st.markdown("---")
-    st.subheader("Αναλυτικοί Έλεγχοι")
-
-    check_icons = {"PASS": "✅", "WARNING": "⚠️", "BREACH": "🚨"}
-    check_colors = {"PASS": "#d4edda", "WARNING": "#fff3cd", "BREACH": "#f8d7da"}
-    check_border = {"PASS": "#28a745", "WARNING": "#ffc107", "BREACH": "#dc3545"}
-
-    for check in report.checks:
-        icon = check_icons[check.status]
-        bg = check_colors[check.status]
-        border = check_border[check.status]
-        st.markdown(
-            f"<div style='background:{bg};border-left:4px solid {border};"
-            f"padding:12px 16px;border-radius:4px;margin-bottom:10px'>"
-            f"<strong>{icon} {check.name}</strong><br/>"
-            f"<span style='color:#555'>Τιμή: <b>{check.value}</b> &nbsp;|&nbsp; Όριο: {check.threshold}</span><br/>"
-            f"{check.message}"
-            f"{'<br/><em>→ ' + check.recommendation + '</em>' if check.recommendation else ''}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -2609,7 +2639,7 @@ def render_validation():
             }
             for a in PORTFOLIO_ARCHETYPES
         ])
-        st.dataframe(arch_df, use_container_width=True, height=350)
+        st.dataframe(arch_df, height=350)
 
     # ── Upload custom portfolios ───────────────────────────────────────────
     st.markdown("---")
@@ -2815,7 +2845,7 @@ def render_validation():
         with vtab1:
             try:
                 fig = _plot_scatter_comparison(results)
-                st.pyplot(fig, use_container_width=True)
+                st.pyplot(fig)
                 plt.close(fig)
                 st.caption(
                     "Κάθε σημείο είναι ένα χαρτοφυλάκιο. Χρωματισμός κατά κατηγορία. "
@@ -2829,7 +2859,7 @@ def render_validation():
             if fd.get("baseline_f1") is not None:
                 try:
                     fig2 = _plot_precision_recall_bar(results)
-                    st.pyplot(fig2, use_container_width=True)
+                    st.pyplot(fig2)
                     plt.close(fig2)
                     st.caption(
                         f"Σύγκριση precision/recall/F1 για τον εντοπισμό χαρτοφυλακίων "
@@ -2849,7 +2879,7 @@ def render_validation():
             try:
                 fig3 = _plot_risk_rank_comparison(results)
                 if fig3 is not None:
-                    st.pyplot(fig3, use_container_width=True)
+                    st.pyplot(fig3)
                     plt.close(fig3)
                     st.caption(
                         "Κάθε χαρτοφυλάκιο παρουσιάζεται ως σειρά. "
@@ -2885,7 +2915,6 @@ def render_validation():
             df.style
               .map(_color_dd, subset=["Πραγματικό Drawdown (%)"])
               .apply(_highlight_user, axis=1),
-            use_container_width=True,
             height=500,
         )
 
@@ -2944,13 +2973,12 @@ def main():
     portfolio = st.session_state.get("portfolio")
 
     # Tab 5 (Πειραματική Αξιολόγηση) is always available, independent of portfolio
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Επισκόπηση Χαρτοφυλακίου",
         "🔀 Ανάλυση Σεναρίων",
         "⚠️ Παρακολούθηση Κινδύνου",
         "💡 Προτάσεις Αναδιάρθρωσης",
         "🔬 Πειραματική Αξιολόγηση",
-        "⚖️ Regulatory Compliance",
     ])
 
     with tab1:
@@ -3021,16 +3049,6 @@ def main():
         except Exception as e:
             st.error(f"Σφάλμα αξιολόγησης: {e}")
             st.exception(e)
-
-    with tab6:
-        if portfolio is None:
-            st.info("Φορτώστε χαρτοφυλάκιο για να δείτε την ανάλυση κανονιστικής συμμόρφωσης.")
-        else:
-            try:
-                render_regulatory(portfolio)
-            except Exception as e:
-                st.error(f"Σφάλμα regulatory: {e}")
-                st.exception(e)
 
 
     st.markdown("---")

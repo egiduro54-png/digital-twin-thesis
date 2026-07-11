@@ -18,8 +18,6 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from pypfopt import risk_models, expected_returns
-
 logger = logging.getLogger(__name__)
 
 # Annualisation factor for daily data
