@@ -629,14 +629,23 @@ class ValidationResults:
             prec_b = rec_b = f1_b = np.nan
             prec_p = rec_p = f1_p = np.nan
 
-        # ── 4. MAE proxy (drawdown prediction error) ───────────────────
-        # Map risk score [0,100] → predicted loss [0,60%] for comparison
-        b_pred_loss = b_arr / 100.0 * 60.0
-        p_pred_loss = p_arr / 100.0 * 60.0
-        actual_loss = -d_arr  # positive values
+        # ── 4. MAE proxy (normalized rank comparison) ──────────────────
+        # Normalize both scores and actual drawdown to [0,1] before comparing.
+        # This removes scale bias: Baseline scores are calibrated to % losses
+        # while Digital Twin scores are a composite on a different absolute scale.
+        # After normalization, lower MAE = score distribution better matches
+        # the actual drawdown distribution in shape.
+        def _norm01(arr: np.ndarray) -> np.ndarray:
+            mn, mx = arr.min(), arr.max()
+            return (arr - mn) / (mx - mn) if mx > mn else np.zeros_like(arr)
 
-        mae_b = float(np.mean(np.abs(b_pred_loss - actual_loss)))
-        mae_p = float(np.mean(np.abs(p_pred_loss - actual_loss)))
+        actual_loss = -d_arr  # positive: larger = worse drawdown
+        b_norm = _norm01(b_arr)
+        p_norm = _norm01(p_arr)
+        d_norm = _norm01(actual_loss)
+
+        mae_b = float(np.mean(np.abs(b_norm - d_norm)))
+        mae_p = float(np.mean(np.abs(p_norm - d_norm)))
 
         # ── 5. Improvement (proposed over baseline) ───────────────────
         improvement_spearman = (

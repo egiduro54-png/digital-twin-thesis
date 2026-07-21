@@ -2766,11 +2766,11 @@ def render_validation():
             sig_p = "p < 0.05 ✅" if (p_p and p_p < 0.05) else f"p = {p_p:.3f}" if p_p else "—"
             st.caption(f"Baseline: {sig_b} | Proposed: {sig_p}")
 
-            st.markdown("#### MAE Προβλεπόμενης vs Πραγματικής Απώλειας (%)")
+            st.markdown("#### MAE Κατάταξης Κινδύνου (κανονικοποιημένο, 0–1)")
             _val_metric_card(
-                "MAE proxy (χαμηλότερο = καλύτερο)",
+                "MAE κανονικοποιημένο (χαμηλότερο = καλύτερο)",
                 mae.get("baseline_mae_pct"), mae.get("proposed_mae_pct"),
-                higher_is_better=False, fmt=".2f",
+                higher_is_better=False, fmt=".3f",
             )
 
         with col_r:
@@ -2810,7 +2810,7 @@ def render_validation():
                   <strong>Βελτίωση Digital Twin vs Baseline</strong><br>
                   F1-Score: <strong>{_fmt_imp(imp_f1)}</strong> &nbsp;|&nbsp;
                   Spearman ρ: <strong>{_fmt_imp(imp_sp)}</strong> &nbsp;|&nbsp;
-                  MAE: <strong>{_fmt_imp(-imp_mae if imp_mae is not None else None, '%', 2)}</strong>
+                  MAE (norm): <strong>{_fmt_imp(-imp_mae if imp_mae is not None else None, '', 3)}</strong>
                 </div>
                 """,
                 unsafe_allow_html=True,
