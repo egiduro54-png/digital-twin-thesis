@@ -2762,8 +2762,16 @@ def render_validation():
 
             p_b = sp.get("baseline_pval")
             p_p = sp.get("proposed_pval")
-            sig_b = "p < 0.05 ✅" if (p_b and p_b < 0.05) else f"p = {p_b:.3f}" if p_b else "—"
-            sig_p = "p < 0.05 ✅" if (p_p and p_p < 0.05) else f"p = {p_p:.3f}" if p_p else "—"
+            def _fmt_pval(p):
+                if p is None:
+                    return "—"
+                if p < 0.001:
+                    return "p < 0.001 ✅"
+                if p < 0.05:
+                    return f"p = {p:.3f} ✅"
+                return f"p = {p:.3f}"
+            sig_b = _fmt_pval(p_b)
+            sig_p = _fmt_pval(p_p)
             st.caption(f"Baseline: {sig_b} | Proposed: {sig_p}")
 
             st.markdown("#### MAE Κατάταξης Κινδύνου (κανονικοποιημένο, 0–1)")
@@ -2810,7 +2818,7 @@ def render_validation():
                   <strong>Βελτίωση Digital Twin vs Baseline</strong><br>
                   F1-Score: <strong>{_fmt_imp(imp_f1)}</strong> &nbsp;|&nbsp;
                   Spearman ρ: <strong>{_fmt_imp(imp_sp)}</strong> &nbsp;|&nbsp;
-                  MAE (norm): <strong>{_fmt_imp(-imp_mae if imp_mae is not None else None, '', 3)}</strong>
+                  MAE (norm): <strong>{_fmt_imp(imp_mae, '', 3)}</strong>
                 </div>
                 """,
                 unsafe_allow_html=True,
