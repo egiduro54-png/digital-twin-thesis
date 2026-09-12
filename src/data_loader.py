@@ -254,6 +254,9 @@ def load_portfolio_with_market_data(
     # Always include SPY (beta), ACWI & AGG (benchmark for Information Ratio)
     history_tickers = list(dict.fromkeys(tickers + ["SPY", "ACWI", "AGG"]))
     historical_prices = fetch_historical_data(history_tickers, years=history_years)
+    # ACWI sometimes returns no data from Yahoo Finance; fall back to SPY as proxy
+    if "ACWI" not in historical_prices.columns and "SPY" in historical_prices.columns:
+        historical_prices["ACWI"] = historical_prices["SPY"]
     ticker_info = fetch_ticker_info(tickers)
 
     return portfolio_df, current_prices, historical_prices, ticker_info

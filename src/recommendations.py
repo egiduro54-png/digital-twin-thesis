@@ -80,14 +80,18 @@ class RecommendationEngine:
         analysis = self.risk_monitor.run_full_analysis()
         recs: list[dict] = []
         rec_id = 1
+        sold_tickers: set[str] = set()
 
         # Process alerts (severity=alert) first, then cautions
         for alert in (analysis["alert"] + analysis["caution"]):
-            generated = self._rec_for_alert(alert, rec_id)
+            generated = self._rec_for_alert(alert, rec_id, sold_tickers=sold_tickers)
             for r in generated:
                 r["id"] = rec_id
                 recs.append(r)
                 rec_id += 1
+                for trade in r.get("trades", []):
+                    if trade.get("action") == "SELL":
+                        sold_tickers.add(trade["ticker"])
 
         # Optionally add optimisation recommendation
         if self.use_optimizer:
@@ -118,14 +122,14 @@ class RecommendationEngine:
     # Alert → Recommendation routing
     # ------------------------------------------------------------------
 
-    def _rec_for_alert(self, alert: dict, rec_id: int) -> list[dict]:
+    def _rec_for_alert(self, alert: dict, rec_id: int, sold_tickers: set | None = None) -> list[dict]:
         category = alert.get("category", "")
         severity = alert.get("severity", "caution")
 
         if "Concentration" in category or "Συγκέντρωση" in category:
             return self._rec_concentration(alert, severity)
         elif "Diversification" in category or "Διαφοροποίηση" in category:
-            return self._rec_diversification(alert, severity)
+            return self._rec_diversification(alert, severity, sold_tickers=sold_tickers)
         elif "Volatility" in category or "Μεταβλητότητα" in category:
             return self._rec_volatility(alert, severity)
         elif "Drawdown" in category:
@@ -197,7 +201,8 @@ class RecommendationEngine:
             ),
         }]
 
-    def _rec_diversification(self, alert: dict, severity: str) -> list[dict]:
+    def _rec_diversification(self, alert: dict, severity: str, sold_tickers: set | None = None) -> list[dict]:
+        sold_tickers = sold_tickers or set()
         title = alert.get("title", "")
         detail = alert.get("detail", {})
         recs = []
@@ -210,7 +215,13 @@ class RecommendationEngine:
             buy_amount = max(buy_amount, 0)
 
             if buy_amount > 50:
-                suggested_etf = self.INTL_ETFS[0]
+                # Skip any INTL_ETF that is already being sold by another recommendation
+                suggested_etf = next(
+                    (etf for etf in self.INTL_ETFS if etf not in sold_tickers),
+                    None,
+                )
+                if suggested_etf is None:
+                    return recs  # all candidates are being sold — skip this rec
                 price_estimate = 58.0
                 shares = int(buy_amount / price_estimate)
 
@@ -330,7 +341,10 @@ class RecommendationEngine:
         shift_amount = pct_to_shift / 100.0 * total
 
         suggested_bond = self.BOND_ETFS[0]
-        bnd_price = 82.0
+        bnd_price = next(
+            (a.current_price for a in self.portfolio.assets if a.ticker == suggested_bond),
+            73.0,
+        )
         bnd_shares = int(shift_amount / bnd_price)
         bnd_value = round(bnd_shares * bnd_price, 2)
 
@@ -520,7 +534,10 @@ class RecommendationEngine:
         largest_bond= max(bond_assets, key=lambda a: a.current_value) if bond_assets else None
 
         trades = []
-        bnd_price = 82.0
+        bnd_price = next(
+            (a.current_price for a in self.portfolio.assets if a.ticker == self.BOND_ETFS[0]),
+            73.0,
+        )
 
         if eq_drift > 0:
             # Too much equity → sell proportionally across all equity positions

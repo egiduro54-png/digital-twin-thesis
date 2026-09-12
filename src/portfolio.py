@@ -247,11 +247,17 @@ class Portfolio:
 
     def calculate_sharpe_ratio(self) -> float:
         """Sharpe ratio = (portfolio_return - risk_free_rate) / volatility."""
-        ret = self.calculate_expected_annual_return()
+        if self.is_scenario:
+            daily_ret = self.get_portfolio_daily_returns()
+            if daily_ret.empty:
+                return float("nan")
+            ret = float(daily_ret.mean() * TRADING_DAYS)
+        else:
+            ret = self.calculate_expected_annual_return()
         vol = self.calculate_volatility()
         if np.isnan(ret) or np.isnan(vol) or vol == 0:
             return float("nan")
-        return (ret - RISK_FREE_RATE) / vol
+        return float(np.clip((ret - RISK_FREE_RATE) / vol, -5.0, 5.0))
 
     def calculate_beta(self, market_ticker: str = "SPY") -> float:
         """
@@ -323,7 +329,10 @@ class Portfolio:
         daily_ret = self.get_portfolio_daily_returns()
         if daily_ret.empty or len(daily_ret) < 20:
             return float("nan")
-        ret = self.calculate_expected_annual_return()
+        if self.is_scenario:
+            ret = float(daily_ret.mean() * TRADING_DAYS)
+        else:
+            ret = self.calculate_expected_annual_return()
         if np.isnan(ret):
             return float("nan")
         # Correct Sortino: RMS of all min(r - MAR, 0)² over ALL days, annualized
@@ -332,7 +341,7 @@ class Portfolio:
         downside_dev = float(np.sqrt(downside_sq.mean() * TRADING_DAYS))
         if downside_dev == 0:
             return float("nan")
-        return (ret - RISK_FREE_RATE) / downside_dev
+        return float(np.clip((ret - RISK_FREE_RATE) / downside_dev, -5.0, 5.0))
 
     def calculate_treynor_ratio(self) -> float:
         """Treynor ratio = (portfolio_return - risk_free_rate) / beta."""
@@ -696,11 +705,17 @@ class Portfolio:
 
     def to_dict(self) -> dict:
         """Full portfolio snapshot as a plain dict (used by dashboard)."""
+        asset_dicts = []
+        for a in self.assets:
+            d = a.to_dict()
+            if d.get("unrealized_pnl_pct", 0) < -50:
+                d["data_warning"] = "Πιθανό stock split — έλεγξε την τιμή εισόδου"
+            asset_dicts.append(d)
         return {
             "name": self.name,
             "risk_profile": self.risk_profile,
             "is_scenario": self.is_scenario,
-            "assets": [a.to_dict() for a in self.assets],
+            "assets": asset_dicts,
             "metrics": self.get_metrics(),
             "composition": self.get_composition(),
             "risk_profile_alignment": self.get_risk_profile_alignment(),
