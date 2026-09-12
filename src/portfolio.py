@@ -384,7 +384,15 @@ class Portfolio:
                 bench_parts.append(ret.loc[common] * weight)
 
         if not bench_parts:
-            return float("nan")
+            # Fallback: χρησιμοποίησε SPY αν κανένα benchmark δεν βρέθηκε
+            if "SPY" in self.historical_prices.columns:
+                spy_prices = self.historical_prices["SPY"].replace(0, np.nan)
+                spy_ret = np.log(spy_prices / spy_prices.shift(1)).dropna()
+                common = daily_ret.index.intersection(spy_ret.index)
+                if len(common) > 20:
+                    bench_parts.append(spy_ret.loc[common] * 1.0)
+            if not bench_parts:
+                return float("nan")
 
         bench_ret = bench_parts[0]
         for part in bench_parts[1:]:
