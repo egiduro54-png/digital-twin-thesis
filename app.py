@@ -2496,43 +2496,30 @@ def _plot_scatter_comparison(results: ValidationResults):
     return fig
 
 
-def _plot_precision_recall_bar(results: ValidationResults):
+def _plot_auroc_bar(results: ValidationResults):
     import matplotlib.pyplot as plt
     fd = results.metrics.get("fragile_detection", {})
 
-    labels = ["Precision", "Recall", "F1-Score"]
-    b_vals = [
-        fd.get("baseline_precision") or 0,
-        fd.get("baseline_recall")    or 0,
-        fd.get("baseline_f1")        or 0,
+    labels = ["Baseline", "Digital Twin"]
+    vals = [
+        fd.get("baseline_auroc") or 0,
+        fd.get("proposed_auroc") or 0,
     ]
-    p_vals = [
-        fd.get("proposed_precision") or 0,
-        fd.get("proposed_recall")    or 0,
-        fd.get("proposed_f1")        or 0,
-    ]
+    colors = ["#6c757d", "#0d6efd"]
 
-    x = np.arange(len(labels))
-    width = 0.35
+    fig, ax = plt.subplots(figsize=(5, 4))
+    bars = ax.bar(labels, vals, color=colors, alpha=0.85, edgecolor="white", width=0.4)
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    bars_b = ax.bar(x - width / 2, b_vals, width, label="Baseline",
-                    color="#6c757d", alpha=0.85, edgecolor="white")
-    bars_p = ax.bar(x + width / 2, p_vals, width, label="Proposed (Digital Twin)",
-                    color="#0d6efd", alpha=0.85, edgecolor="white")
-
-    for bar in bars_b + bars_p:
-        h = bar.get_height()
-        if h > 0:
-            ax.text(bar.get_x() + bar.get_width() / 2, h + 0.01,
-                    f"{h:.2f}", ha="center", va="bottom", fontsize=9)
+    for bar, v in zip(bars, vals):
+        if v > 0:
+            ax.text(bar.get_x() + bar.get_width() / 2, v + 0.01,
+                    f"{v:.3f}", ha="center", va="bottom", fontsize=12, fontweight="bold")
 
     ax.set_ylim(0, 1.15)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=11)
-    ax.set_ylabel("Score", fontsize=10)
+    ax.axhline(0.5, color="red", linestyle="--", linewidth=1, alpha=0.6, label="Random (0.5)")
+    ax.set_ylabel("AUROC", fontsize=11)
     ax.set_title(
-        f"Εντοπισμός Ευάλωτων Χαρτοφυλακίων\n"
+        f"AUROC — Εντοπισμός Ευάλωτων Χαρτοφυλακίων\n"
         f"(threshold: drawdown < {fd.get('threshold_pct', -15):.0f}%)",
         fontsize=11, fontweight="bold",
     )
@@ -2787,24 +2774,21 @@ def render_validation():
                 f"*(drawdown < {fd.get('threshold_pct', -15):.0f}%)*"
             )
             _val_metric_card(
-                "Precision (υψηλότερο = καλύτερο)",
-                fd.get("baseline_precision"), fd.get("proposed_precision"),
-                higher_is_better=True,
+                "AUROC (υψηλότερο = καλύτερο, 0.5 = τυχαίο)",
+                fd.get("baseline_auroc"), fd.get("proposed_auroc"),
+                higher_is_better=True, fmt=".3f",
             )
-            _val_metric_card(
-                "Recall  (υψηλότερο = καλύτερο)",
-                fd.get("baseline_recall"), fd.get("proposed_recall"),
-                higher_is_better=True,
-            )
-            _val_metric_card(
-                "F1-Score  (υψηλότερο = καλύτερο)",
-                fd.get("baseline_f1"), fd.get("proposed_f1"),
-                higher_is_better=True,
+            n_frag = fd.get("n_fragile", results.metrics.get("n_fragile", "—"))
+            n_tot  = results.metrics.get("n_valid", 30)
+            st.caption(
+                f"Ευάλωτα χαρτοφυλάκια: {n_frag}/{n_tot} "
+                f"(drawdown < {fd.get('threshold_pct', -15):.0f}%). "
+                f"AUROC > 0.5 σημαίνει καλύτερο από τυχαίο· 1.0 = τέλειος διαχωρισμός."
             )
 
-            imp_f1  = fd.get("f1_improvement")
-            imp_sp  = sp.get("improvement")
-            imp_mae = mae.get("improvement_pct")
+            imp_auroc = fd.get("auroc_improvement")
+            imp_sp    = sp.get("improvement")
+            imp_mae   = mae.get("improvement_pct")
 
             def _fmt_imp(v, suffix="", decimals=3):
                 if v is None:
@@ -2816,7 +2800,7 @@ def render_validation():
                 f"""
                 <div style="background:#e8f5e9;border-radius:8px;padding:10px;margin-top:8px">
                   <strong>Βελτίωση Digital Twin vs Baseline</strong><br>
-                  F1-Score: <strong>{_fmt_imp(imp_f1)}</strong> &nbsp;|&nbsp;
+                  AUROC: <strong>{_fmt_imp(imp_auroc)}</strong> &nbsp;|&nbsp;
                   Spearman ρ: <strong>{_fmt_imp(imp_sp)}</strong> &nbsp;|&nbsp;
                   MAE (norm): <strong>{_fmt_imp(imp_mae, '', 3)}</strong>
                 </div>
@@ -2831,7 +2815,7 @@ def render_validation():
         import matplotlib.pyplot as plt
         vtab1, vtab2, vtab3 = st.tabs([
             "🎯 Risk Score vs Actual Drawdown",
-            "📊 Precision / Recall / F1",
+            "📊 AUROC — Εντοπισμός Ευάλωτων",
             "🏆 Σύγκριση Κατάταξης",
         ])
 
@@ -2849,16 +2833,16 @@ def render_validation():
                 st.warning(f"Σφάλμα γραφήματος: {e}")
 
         with vtab2:
-            if fd.get("baseline_f1") is not None:
+            if fd.get("baseline_auroc") is not None:
                 try:
-                    fig2 = _plot_precision_recall_bar(results)
+                    fig2 = _plot_auroc_bar(results)
                     st.pyplot(fig2)
                     plt.close(fig2)
                     st.caption(
-                        f"Σύγκριση precision/recall/F1 για τον εντοπισμό χαρτοφυλακίων "
-                        f"που υπέστησαν drawdown > {abs(fd.get('threshold_pct', 15)):.0f}% "
-                        f"στην περίοδο αξιολόγησης. "
-                        f"Ευάλωτα χαρτοφυλάκια: {fd.get('n_fragile', 0)}/{results.metrics.get('n_valid', 0)}."
+                        f"AUROC (Area Under ROC Curve): μετράει πόσο καλά κάθε σύστημα "
+                        f"διαχωρίζει τα ευάλωτα από τα μη ευάλωτα χαρτοφυλάκια "
+                        f"(threshold: drawdown < {abs(fd.get('threshold_pct', 15)):.0f}%) "
+                        f"ανεξάρτητα από κατώφλι αποφάσεων."
                     )
                 except Exception as e:
                     st.warning(f"Σφάλμα γραφήματος: {e}")

@@ -583,7 +583,7 @@ class ValidationResults:
         fragile_threshold: portfolios with actual_drawdown < this are "fragile"
         """
         from scipy import stats
-        from sklearn.metrics import precision_recall_fscore_support
+        from sklearn.metrics import roc_auc_score
         # Remove NaN entries
         valid = [
             (b, p, d, r)
@@ -610,27 +610,19 @@ class ValidationResults:
         tau_b, ptau_b = stats.kendalltau(b_arr, -d_arr)
         tau_p, ptau_p = stats.kendalltau(p_arr, -d_arr)
 
-        # ── 3. Fragile Portfolio Detection ───────────────────────────────
+        # ── 3. Fragile Portfolio Detection (AUROC) ────────────────────────
+        # AUROC is threshold-independent: it measures whether each system
+        # consistently assigns higher risk scores to portfolios that actually
+        # suffered larger drawdowns. Unlike top-k F1, it does not assume both
+        # systems predict the same number of positives.
         fragile_true = np.array([dd < fragile_threshold for dd in d_arr])
         n_fragile = int(fragile_true.sum())
 
         if 0 < n_fragile < len(d_arr):
-            k = n_fragile
-            topk_b = set(np.argsort(b_arr)[::-1][:k])
-            topk_p = set(np.argsort(p_arr)[::-1][:k])
-
-            pred_b = np.array([i in topk_b for i in range(len(b_arr))])
-            pred_p = np.array([i in topk_p for i in range(len(p_arr))])
-
-            prec_b, rec_b, f1_b, _ = precision_recall_fscore_support(
-                fragile_true, pred_b, average="binary", zero_division=0
-            )
-            prec_p, rec_p, f1_p, _ = precision_recall_fscore_support(
-                fragile_true, pred_p, average="binary", zero_division=0
-            )
+            auroc_b = float(roc_auc_score(fragile_true, b_arr))
+            auroc_p = float(roc_auc_score(fragile_true, p_arr))
         else:
-            prec_b = rec_b = f1_b = np.nan
-            prec_p = rec_p = f1_p = np.nan
+            auroc_b = auroc_p = np.nan
 
         # ── 4. MAE proxy (normalized rank comparison) ──────────────────
         # Normalize both scores and actual drawdown to [0,1] before comparing.
@@ -655,9 +647,9 @@ class ValidationResults:
             round(float(rho_p - rho_b), 3)
             if not (np.isnan(rho_p) or np.isnan(rho_b)) else None
         )
-        improvement_f1 = (
-            round(float(f1_p - f1_b), 3)
-            if not (np.isnan(f1_p) or np.isnan(f1_b)) else None
+        improvement_auroc = (
+            round(float(auroc_p - auroc_b), 3)
+            if not (np.isnan(auroc_b) or np.isnan(auroc_p)) else None
         )
         improvement_mae = (
             round(float(mae_b - mae_p), 2)
@@ -682,13 +674,11 @@ class ValidationResults:
                 "proposed_pval":  round(float(ptau_p), 4),
             },
             "fragile_detection": {
-                "baseline_precision": round(float(prec_b), 3) if not np.isnan(prec_b) else None,
-                "baseline_recall":    round(float(rec_b), 3)  if not np.isnan(rec_b)  else None,
-                "baseline_f1":        round(float(f1_b), 3)   if not np.isnan(f1_b)   else None,
-                "proposed_precision": round(float(prec_p), 3) if not np.isnan(prec_p) else None,
-                "proposed_recall":    round(float(rec_p), 3)  if not np.isnan(rec_p)  else None,
-                "proposed_f1":        round(float(f1_p), 3)   if not np.isnan(f1_p)   else None,
-                "f1_improvement":     improvement_f1,
+                "baseline_auroc":   round(auroc_b, 3) if not np.isnan(auroc_b) else None,
+                "proposed_auroc":   round(auroc_p, 3) if not np.isnan(auroc_p) else None,
+                "auroc_improvement": improvement_auroc,
+                "n_fragile":        n_fragile,
+                "threshold_pct":    fragile_threshold,
             },
             "mae_proxy": {
                 "baseline_mae_pct":  round(mae_b, 2),
