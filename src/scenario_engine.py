@@ -134,10 +134,10 @@ STANDARD_SCENARIOS: dict[str, dict] = {
     },
     "financial_crisis_2008": {
         "name": "2008 Financial Crisis",
-        "description": "Replay of 2008: market -40%, rates up 2%, extreme volatility.",
+        "description": "Replay of 2008: market -40%, Fed cut rates -3%, extreme volatility.",
         "category": "Stress Test",
         "market_change": -0.40,
-        "rate_change": 0.02,
+        "rate_change": -0.03,
         "volatility_multiplier": 4.0,
         "sector_overrides": {
             "Financials": -0.55,

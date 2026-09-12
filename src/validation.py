@@ -306,9 +306,12 @@ def build_portfolio_from_prices(
     if not assets:
         raise ValueError(f"Could not build assets for archetype '{archetype['id']}'")
 
+    # Include SPY as market reference for beta even if not a portfolio holding
+    port_cols = [a.ticker for a in assets]
+    market_refs = [t for t in ["SPY"] if t in prices_df.columns and t not in port_cols]
     return Portfolio(
         assets=assets,
-        historical_prices=prices_df[[a.ticker for a in assets]],
+        historical_prices=prices_df[port_cols + market_refs],
         risk_profile=archetype.get("risk_profile", "moderate"),
         name=archetype["label"],
     )
@@ -770,6 +773,7 @@ class ValidationExperiment:
         tickers: set[str] = set()
         for arch in self.archetypes:
             tickers.update(arch["tickers"])
+        tickers.add("SPY")  # always fetch SPY as market reference for beta
         return sorted(tickers)
 
     def fetch_data(self) -> pd.DataFrame:

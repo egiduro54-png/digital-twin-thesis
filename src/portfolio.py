@@ -236,11 +236,14 @@ class Portfolio:
         return float(subset.std() * np.sqrt(TRADING_DAYS))
 
     def calculate_expected_annual_return(self) -> float:
-        """Annualised expected return based on historical mean daily return."""
+        """Annualised expected simple return with Itô correction for log returns."""
         daily_ret = self.get_portfolio_daily_returns()
         if daily_ret.empty:
             return float("nan")
-        return float(daily_ret.mean() * TRADING_DAYS)
+        mu = daily_ret.mean()
+        sigma2 = daily_ret.var()
+        # Itô correction: E[simple_return] = exp(mu*T + 0.5*sigma²*T) - 1
+        return float(np.exp(mu * TRADING_DAYS + 0.5 * sigma2 * TRADING_DAYS) - 1)
 
     def calculate_sharpe_ratio(self) -> float:
         """Sharpe ratio = (portfolio_return - risk_free_rate) / volatility."""
@@ -292,8 +295,8 @@ class Portfolio:
         if daily_ret.empty:
             return float("nan")
 
-        # Build cumulative wealth index
-        cum = (1 + daily_ret).cumprod()
+        # Build cumulative wealth index from log returns
+        cum = np.exp(daily_ret.cumsum())
         rolling_max = cum.cummax()
         drawdown = (cum - rolling_max) / rolling_max
         return float(drawdown.min())
@@ -308,10 +311,12 @@ class Portfolio:
         daily_ret = self.get_portfolio_daily_returns()
         if daily_ret.empty or len(daily_ret) < 20:
             return float("nan")
-        var_daily = float(np.percentile(daily_ret, (1 - confidence) * 100))
-        # Annualise to a monthly VaR (21 trading days)
-        var_monthly = var_daily * np.sqrt(21)
-        return var_monthly
+        if len(daily_ret) < 42:
+            return float("nan")
+        # 21-day historical VaR: use actual rolling 21-day returns, not sqrt(21) scaling
+        rolling_log = daily_ret.rolling(21).sum().dropna()
+        rolling_simple = np.exp(rolling_log) - 1
+        return float(np.percentile(rolling_simple, (1 - confidence) * 100))
 
     def calculate_sortino_ratio(self) -> float:
         """Sortino ratio = (portfolio_return - risk_free_rate) / downside_deviation."""
@@ -321,10 +326,10 @@ class Portfolio:
         ret = self.calculate_expected_annual_return()
         if np.isnan(ret):
             return float("nan")
-        downside = daily_ret[daily_ret < 0]
-        if len(downside) < 5:
-            return float("nan")
-        downside_dev = float(downside.std() * np.sqrt(TRADING_DAYS))
+        # Correct Sortino: RMS of all min(r - MAR, 0)² over ALL days, annualized
+        daily_mar = RISK_FREE_RATE / TRADING_DAYS
+        downside_sq = np.minimum(daily_ret - daily_mar, 0.0) ** 2
+        downside_dev = float(np.sqrt(downside_sq.mean() * TRADING_DAYS))
         if downside_dev == 0:
             return float("nan")
         return (ret - RISK_FREE_RATE) / downside_dev
@@ -395,7 +400,7 @@ class Portfolio:
             return {}
 
         today = daily_ret.index[-1]
-        cum = (1 + daily_ret).cumprod()
+        cum = np.exp(daily_ret.cumsum())
 
         def _ret_since(start_date):
             subset = cum[cum.index >= start_date]
@@ -624,8 +629,8 @@ class Portfolio:
                 new_price = asset.current_price * (1 + market_change * 0.8 + rate_adj)
 
             elif asset.asset_class in ("Commodity", "Commodities ETF"):
-                # Commodities partially hedge against inflation / rate changes
-                inflation_hedge = rate_change * 0.5
+                # Rate cuts → negative real rates → commodities rise; rate hikes → fall
+                inflation_hedge = -rate_change * 0.5
                 new_price = asset.current_price * (1 + market_change * 0.5 + inflation_hedge)
 
             new_price = max(new_price, 0.0)  # prices cannot go negative
