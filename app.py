@@ -83,6 +83,26 @@ logger = logging.getLogger(__name__)
 
 EXPLAINER = Explainer()
 
+
+def _show_fig(fig, dpi: int = 120) -> None:
+    """
+    Render a matplotlib figure inline as a base64 PNG.
+
+    st.pyplot serves images through Streamlit's in-memory media store; after a
+    rerun or a Streamlit Cloud restart the browser may request an image that has
+    already been evicted, leaving a broken-image icon. Embedding the PNG in the
+    page avoids that second request entirely.
+    """
+    import base64
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+    st.markdown(
+        f'<img src="data:image/png;base64,{encoded}" style="max-width:100%;height:auto">',
+        unsafe_allow_html=True,
+    )
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -585,7 +605,7 @@ def _plot_correlation_heatmap(portfolio):
         spine.set_edgecolor("#444")
 
     plt.tight_layout()
-    st.pyplot(fig)
+    _show_fig(fig)
     plt.close(fig)
 
     # Interpretation guide
@@ -637,7 +657,7 @@ def _plot_composition(composition: dict):
         _pie(axes[1], top, "Ανά Κλάδο (top 6)")
 
     plt.tight_layout()
-    st.pyplot(fig)
+    _show_fig(fig)
     plt.close(fig)
 
 
@@ -2555,7 +2575,7 @@ def _plot_risk_rank_comparison(results: ValidationResults):
 
     b_rank  = to_rank(b_scores)
     p_rank  = to_rank(p_scores)
-    dd_rank = to_rank(drawdowns)  # more negative = riskier
+    dd_rank = to_rank(drawdowns, ascending=True)  # more negative = riskier → rank 1
 
     labels  = [results.portfolio_labels[i] for i in valid_idx]
     n = len(valid_idx)
@@ -2822,7 +2842,7 @@ def render_validation():
         with vtab1:
             try:
                 fig = _plot_scatter_comparison(results)
-                st.pyplot(fig)
+                _show_fig(fig)
                 plt.close(fig)
                 st.caption(
                     "Κάθε σημείο είναι ένα χαρτοφυλάκιο. Χρωματισμός κατά κατηγορία. "
@@ -2836,7 +2856,7 @@ def render_validation():
             if fd.get("baseline_auroc") is not None:
                 try:
                     fig2 = _plot_auroc_bar(results)
-                    st.pyplot(fig2)
+                    _show_fig(fig2)
                     plt.close(fig2)
                     st.caption(
                         f"AUROC (Area Under ROC Curve): μετράει πόσο καλά κάθε σύστημα "
@@ -2856,7 +2876,7 @@ def render_validation():
             try:
                 fig3 = _plot_risk_rank_comparison(results)
                 if fig3 is not None:
-                    st.pyplot(fig3)
+                    _show_fig(fig3)
                     plt.close(fig3)
                     st.caption(
                         "Κάθε χαρτοφυλάκιο παρουσιάζεται ως σειρά. "
