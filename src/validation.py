@@ -53,13 +53,13 @@ TICKER_META: dict[str, dict] = {
     "HD":    {"name": "Home Depot Inc.",              "sector": "Consumer Discretionary", "asset_class": "Equity",              "country": "US"},
     "XOM":   {"name": "Exxon Mobil Corp.",            "sector": "Energy",                 "asset_class": "Equity",              "country": "US"},
     "CVX":   {"name": "Chevron Corp.",                "sector": "Energy",                 "asset_class": "Equity",              "country": "US"},
-    "SPY":   {"name": "SPDR S&P 500 ETF Trust",      "sector": "Broad Market",           "asset_class": "Equity",              "country": "US"},
-    "AGG":   {"name": "iShares Core US Agg Bond ETF","sector": "Fixed Income",           "asset_class": "Fixed Income",        "country": "US"},
-    "BND":   {"name": "Vanguard Total Bond Mkt ETF", "sector": "Fixed Income",           "asset_class": "Fixed Income",        "country": "US"},
-    "TLT":   {"name": "iShares 20+ Year Treasury",   "sector": "Fixed Income",           "asset_class": "Fixed Income",        "country": "US"},
-    "VEA":   {"name": "Vanguard FTSE Dev Mkts ETF",  "sector": "International Equity",   "asset_class": "International Equity","country": "Developed"},
-    "EEM":   {"name": "iShares MSCI Emerg Mkts ETF", "sector": "International Equity",   "asset_class": "International Equity","country": "Emerging"},
-    "GLD":   {"name": "SPDR Gold Shares",             "sector": "Commodities",            "asset_class": "Commodity",           "country": "Global"},
+    "SPY":   {"name": "SPDR S&P 500 ETF Trust",      "sector": "Equity ETF",             "asset_class": "Equity",              "country": "US"},
+    "AGG":   {"name": "iShares Core US Agg Bond ETF","sector": "Bond ETF",               "asset_class": "Fixed Income",        "country": "US"},
+    "BND":   {"name": "Vanguard Total Bond Mkt ETF", "sector": "Bond ETF",               "asset_class": "Fixed Income",        "country": "US"},
+    "TLT":   {"name": "iShares 20+ Year Treasury",   "sector": "Bond ETF",               "asset_class": "Fixed Income",        "country": "US"},
+    "VEA":   {"name": "Vanguard FTSE Dev Mkts ETF",  "sector": "International ETF",      "asset_class": "International Equity","country": "Developed"},
+    "EEM":   {"name": "iShares MSCI Emerg Mkts ETF", "sector": "International ETF",      "asset_class": "International Equity","country": "Emerging"},
+    "GLD":   {"name": "SPDR Gold Shares",             "sector": "Commodities ETF",        "asset_class": "Commodity",           "country": "Global"},
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

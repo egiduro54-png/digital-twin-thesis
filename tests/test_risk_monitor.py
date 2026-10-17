@@ -49,7 +49,51 @@ class TestConcentration:
         monitor = RiskMonitor(p)
         alerts = monitor.check_concentration()
         severities = {a["title"]: a["severity"] for a in alerts}
-        assert severities["Single-Asset Concentration"] == "alert"
+        assert severities["Συγκέντρωση σε Μεμονωμένο Τίτλο"] == "alert"
+
+    def _single_alert(self, assets):
+        hist = pd.DataFrame(
+            {a.ticker: _prices(i).values for i, a in enumerate(assets)},
+            index=_prices(0).index,
+        )
+        alerts = RiskMonitor(_portfolio(assets, hist)).check_concentration()
+        return next(a for a in alerts if "Μεμονωμένο" in a["title"])
+
+    def test_broad_etf_uses_fund_limit(self):
+        # 55% in one bond ETF is what a Defensive profile requires: not a breach
+        alert = self._single_alert([
+            _asset("BND", 550, 100, "Bond ETF", "Fixed Income"),
+            _asset("SPY", 250, 100, "Equity ETF", "Equity"),
+            _asset("VXUS", 200, 100, "International ETF", "International Equity"),
+        ])
+        assert alert["severity"] == "ok"
+        assert alert["detail"]["is_fund"] is True
+
+    def test_broad_etf_over_fund_limit_alerts(self):
+        alert = self._single_alert([
+            _asset("SPY", 850, 100, "Equity ETF", "Equity"),
+            _asset("BND", 150, 100, "Bond ETF", "Fixed Income"),
+        ])
+        assert alert["severity"] == "alert"
+        assert alert["detail"]["largest_ticker"] == "SPY"
+
+    def test_commodity_etf_uses_security_limit(self):
+        # GLD tracks a single commodity, so it is not a diversified fund
+        alert = self._single_alert([
+            _asset("GLD", 300, 100, "Commodities ETF", "Commodity"),
+            _asset("BND", 700, 100, "Bond ETF", "Fixed Income"),
+        ])
+        assert alert["detail"]["largest_ticker"] == "GLD"
+        assert alert["severity"] == "alert"
+
+    def test_stock_breach_reported_over_larger_ok_fund(self):
+        alert = self._single_alert([
+            _asset("SPY", 600, 100, "Equity ETF", "Equity"),
+            _asset("AAPL", 300, 100, "Technology", "Equity"),
+            _asset("BND", 100, 100, "Bond ETF", "Fixed Income"),
+        ])
+        assert alert["detail"]["largest_ticker"] == "AAPL"
+        assert alert["severity"] == "alert"
 
     def test_ok_when_assets_balanced(self):
         assets = [_asset(f"T{i}", 100, 100) for i in range(10)]
@@ -61,7 +105,7 @@ class TestConcentration:
         p = _portfolio(assets, hist)
         monitor = RiskMonitor(p)
         alerts = monitor.check_concentration()
-        single_alert = next(a for a in alerts if "Single" in a["title"])
+        single_alert = next(a for a in alerts if "Μεμονωμένο" in a["title"])
         assert single_alert["severity"] == "ok"
 
 
@@ -80,9 +124,25 @@ class TestDiversification:
         p = _portfolio(assets, hist)
         monitor = RiskMonitor(p)
         alerts = monitor.check_diversification()
-        holdings_alert = next((a for a in alerts if "Holdings" in a["title"]), None)
+        holdings_alert = next((a for a in alerts if "Αριθμός Θέσεων" in a["title"]), None)
         assert holdings_alert is not None
         assert holdings_alert["severity"] in ("caution", "alert")
+
+    def test_etf_label_is_not_a_sector(self):
+        # 70% in one bond ETF must not read as a 70% "Bond ETF" sector
+        assets = [
+            _asset("BND", 700, 100, "Bond ETF", "Fixed Income"),
+            _asset("AAPL", 150, 100, "Technology", "Equity"),
+            _asset("JNJ", 150, 100, "Healthcare", "Equity"),
+        ]
+        hist = pd.DataFrame(
+            {a.ticker: _prices(i).values for i, a in enumerate(assets)},
+            index=_prices(0).index,
+        )
+        alerts = RiskMonitor(_portfolio(assets, hist)).check_diversification()
+        sector = next(a for a in alerts if "Κλάδο" in a["title"])
+        assert sector["detail"]["top_sector"] != "Bond ETF"
+        assert sector["severity"] == "ok"
 
     def test_no_international_triggers_caution(self):
         assets = [
@@ -96,7 +156,7 @@ class TestDiversification:
         p = _portfolio(assets, hist)
         monitor = RiskMonitor(p)
         alerts = monitor.check_diversification()
-        geo_alert = next((a for a in alerts if "Geographic" in a["title"]), None)
+        geo_alert = next((a for a in alerts if "Γεωγραφική" in a["title"]), None)
         assert geo_alert is not None
         assert geo_alert["severity"] in ("caution", "alert")
 

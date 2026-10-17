@@ -38,6 +38,10 @@ DEFAULT_THRESHOLDS = {
     # Concentration
     "concentration_caution_pct": 20.0,      # single asset > 20% → caution
     "concentration_alert_pct": 25.0,        # single asset > 25% → alert
+    # A broad ETF is itself diversified, so it gets a looser limit; otherwise a
+    # profile that needs ~55-60% bonds held in one bond ETF would always alert.
+    "fund_concentration_caution_pct": 65.0,
+    "fund_concentration_alert_pct": 80.0,
     "top5_caution_pct": 60.0,               # top-5 > 60% → caution
     "top5_alert_pct": 70.0,                 # top-5 > 70% → alert
     "herfindahl_caution": 0.18,
@@ -65,6 +69,16 @@ DEFAULT_THRESHOLDS = {
     "drift_caution_pct": 5.0,
     "drift_alert_pct": 10.0,
 }
+
+
+def is_diversified_fund(asset) -> bool:
+    """
+    Broad ETFs (equity, bond, international, real estate) hold many securities
+    and get the looser fund limit. Commodity ETFs such as GLD track a single
+    commodity, so they are treated like individual securities.
+    """
+    sector = (asset.sector or "")
+    return "ETF" in sector and "Commodit" not in sector
 
 
 def _severity(value: float, caution: float, alert: float,
@@ -113,42 +127,54 @@ class RiskMonitor:
         composition = self.portfolio.get_composition()
         conc = composition.get("concentration", {})
 
-        largest = conc.get("largest_single_asset_pct", 0.0)
         top5 = conc.get("top_5_assets_pct", 0.0)
         hhi = conc.get("herfindahl_index", 0.0)
 
-        # Find which ticker is the largest
-        weights = self.portfolio.get_weights()
-        tickers = self.portfolio.tickers
-        if len(weights) > 0:
-            largest_idx = int(np.argmax(weights))
-            largest_ticker = tickers[largest_idx]
-        else:
-            largest_ticker = "N/A"
+        # Single-asset concentration: each position is judged against the limit
+        # for its type (individual security vs diversified fund); the reported
+        # position is the most severe breach, ties broken by weight.
+        total = self.portfolio.total_value
+        rank = {"ok": 0, "caution": 1, "alert": 2}
+        flagged = None  # (severity, pct, ticker, is_fund)
+        for a in self.portfolio.assets:
+            pct = a.current_value / total * 100 if total > 0 else 0.0
+            fund = is_diversified_fund(a)
+            prefix = "fund_concentration" if fund else "concentration"
+            s = _severity(pct, self.thresholds[f"{prefix}_caution_pct"],
+                          self.thresholds[f"{prefix}_alert_pct"])
+            key = (rank[s], pct)
+            if flagged is None or key > (rank[flagged[0]], flagged[1]):
+                flagged = (s, pct, a.ticker, fund)
 
-        # Single-asset concentration
-        sev = _severity(
-            largest,
-            self.thresholds["concentration_caution_pct"],
-            self.thresholds["concentration_alert_pct"],
-        )
+        sev, flagged_pct, flagged_ticker, flagged_is_fund = flagged or ("ok", 0.0, "N/A", False)
+        prefix = "fund_concentration" if flagged_is_fund else "concentration"
+        caution_lim = self.thresholds[f"{prefix}_caution_pct"]
+        alert_lim = self.thresholds[f"{prefix}_alert_pct"]
+        kind = "διαφοροποιημένο ETF" if flagged_is_fund else "μεμονωμένος τίτλος"
+
         alerts.append({
             "category": "Συγκέντρωση (Concentration)",
             "severity": sev,
             "title": "Συγκέντρωση σε Μεμονωμένο Τίτλο",
             "description": (
-                f"Μεγαλύτερη θέση ({largest_ticker}): {largest:.1f}% του χαρτοφυλακίου. "
-                f"Όρια: προσοχή >{self.thresholds['concentration_caution_pct']}%, "
-                f"προειδοποίηση >{self.thresholds['concentration_alert_pct']}%."
+                f"Μεγαλύτερη θέση ({flagged_ticker}, {kind}): {flagged_pct:.1f}% του "
+                f"χαρτοφυλακίου. Όρια για {kind}: προσοχή >{caution_lim:g}%, "
+                f"προειδοποίηση >{alert_lim:g}%. "
+                f"(Μεμονωμένοι τίτλοι: {self.thresholds['concentration_caution_pct']:g}%/"
+                f"{self.thresholds['concentration_alert_pct']:g}%, "
+                f"διαφοροποιημένα ETF: {self.thresholds['fund_concentration_caution_pct']:g}%/"
+                f"{self.thresholds['fund_concentration_alert_pct']:g}%.)"
             ),
             "recommendation": (
-                f"Μειώστε το {largest_ticker} κάτω από "
-                f"{self.thresholds['concentration_caution_pct']}% για μείωση του κινδύνου συγκέντρωσης."
+                f"Μειώστε το {flagged_ticker} κάτω από {caution_lim:g}% "
+                "για μείωση του κινδύνου συγκέντρωσης."
                 if sev != "ok" else "Η συγκέντρωση είναι εντός ασφαλών ορίων."
             ),
             "detail": {
-                "largest_ticker": largest_ticker,
-                "largest_pct": largest,
+                "largest_ticker": flagged_ticker,
+                "largest_pct": flagged_pct,
+                "is_fund": flagged_is_fund,
+                "target_pct": caution_lim,
                 "top5_pct": top5,
                 "herfindahl_index": hhi,
             },
@@ -208,8 +234,16 @@ class RiskMonitor:
             "detail": {"num_holdings": n},
         })
 
-        # Single-sector concentration
-        by_sector = composition.get("by_sector", {})
+        # Single-sector concentration. Broad ETFs span many sectors and a
+        # missing sector is not a sector, so neither is counted as one; their
+        # weight is still part of the denominator (% of the whole portfolio).
+        all_sectors = composition.get("by_sector", {})
+        total = self.portfolio.total_value
+        by_sector: dict[str, float] = {}
+        for a in self.portfolio.assets:
+            if is_diversified_fund(a) or (a.sector or "Unknown") == "Unknown" or total <= 0:
+                continue
+            by_sector[a.sector] = by_sector.get(a.sector, 0.0) + a.current_value / total * 100
         if by_sector:
             top_sector, top_sector_pct = max(by_sector.items(), key=lambda x: x[1])
             sev_sec = _severity(
@@ -230,7 +264,7 @@ class RiskMonitor:
                     if sev_sec != "ok" else "Η κατανομή ανά κλάδο είναι ισορροπημένη."
                 ),
                 "detail": {"top_sector": top_sector, "top_sector_pct": top_sector_pct,
-                           "all_sectors": by_sector},
+                           "all_sectors": all_sectors},
             })
 
         # International exposure

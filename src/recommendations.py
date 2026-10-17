@@ -151,8 +151,9 @@ class RecommendationEngine:
         if asset is None:
             return []
 
-        # Target: bring to 20%
-        target_pct = 20.0
+        # Target: the caution limit for this position type (security vs broad ETF)
+        target_pct = float(detail.get("target_pct", 20.0))
+        kind = "διαφοροποιημένα ETF" if detail.get("is_fund") else "μεμονωμένους τίτλους"
         total = self.portfolio.total_value
         excess_value = (largest_pct - target_pct) / 100.0 * total
 
@@ -181,7 +182,7 @@ class RecommendationEngine:
             "trades": trades,
             "why": (
                 f"Το {largest_ticker} αποτελεί {largest_pct:.1f}% του χαρτοφυλακίου — "
-                f"πάνω από το ασφαλές όριο του {target_pct:.0f}%. "
+                f"πάνω από το ασφαλές όριο του {target_pct:.0f}% για {kind}. "
                 "Υψηλή συγκέντρωση σημαίνει ότι η πτώση ενός τίτλου έχει δυσανάλογη επίπτωση."
             ),
             "impact": {
@@ -192,7 +193,7 @@ class RecommendationEngine:
             },
             "confidence": "high" if severity == "alert" else "medium",
             "alternative": (
-                f"Μειώστε το {largest_ticker} στο 22% αντί του {target_pct:.0f}% "
+                f"Μειώστε το {largest_ticker} στο {target_pct + 2:.0f}% αντί του {target_pct:.0f}% "
                 "για μικρότερη προσαρμογή που εξακολουθεί να βελτιώνει τον κίνδυνο."
             ),
         }]

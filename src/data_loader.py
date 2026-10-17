@@ -50,13 +50,28 @@ SECTOR_FALLBACK = {
     "GSG": "Commodities ETF",
     "BTC-USD": "Cryptocurrency",
     "ETH-USD": "Cryptocurrency",
+    "VEA": "International ETF",
+    "EEM": "Emerging Markets ETF",
+    # Individual stocks (GICS sectors). Live .info lookups were removed to keep
+    # Cloud loads fast, so without these every stock read as "Unknown" and the
+    # sector checks and sector_overrides of the scenarios never applied.
+    "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology",
+    "GOOGL": "Communication Services", "GOOG": "Communication Services",
+    "META": "Communication Services",
+    "AMZN": "Consumer Discretionary", "TSLA": "Consumer Discretionary",
+    "HD": "Consumer Discretionary",
+    "JPM": "Financials", "BAC": "Financials", "GS": "Financials",
+    "JNJ": "Healthcare", "PFE": "Healthcare", "UNH": "Healthcare",
+    "WMT": "Consumer Staples", "KO": "Consumer Staples", "PG": "Consumer Staples",
+    "XOM": "Energy", "CVX": "Energy",
 }
 
 ASSET_CLASS_FALLBACK = {
     "SPY": "Equity", "QQQ": "Equity", "VTI": "Equity", "IVV": "Equity",
     "VIG": "Equity", "VYM": "Equity",
     "VXUS": "International Equity", "EFA": "International Equity",
-    "IEMG": "International Equity",
+    "IEMG": "International Equity", "VEA": "International Equity",
+    "EEM": "International Equity",
     "BND": "Fixed Income", "TLT": "Fixed Income", "IEF": "Fixed Income",
     "SHY": "Fixed Income", "AGG": "Fixed Income", "LQD": "Fixed Income",
     "HYG": "Fixed Income", "VCIT": "Fixed Income", "VCSH": "Fixed Income",

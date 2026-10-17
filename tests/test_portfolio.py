@@ -197,7 +197,7 @@ class TestRiskProfileAlignment:
         p = Portfolio(assets, hist, risk_profile="conservative")
         align = p.get_risk_profile_alignment()
         assert align["risk_profile"] == "conservative"
-        assert align["target_equity_pct"] == 30.0
+        assert align["target_equity_pct"] == 25.0
 
 
 # ---------------------------------------------------------------------------

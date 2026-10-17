@@ -113,7 +113,7 @@ class TestRecommendationEngine:
         assets = [
             _asset("SPY",  200, 100, "Equity ETF", "Equity"),
             _asset("VXUS", 80, 55, "International ETF", "International Equity"),
-            _asset("BND",  600, 100, "Fixed Income", "Fixed Income"),
+            _asset("BND",  600, 100, "Bond ETF", "Fixed Income"),
             _asset("GLD",  50, 185, "Commodity", "Commodity"),
         ]
         p = _make_portfolio(assets, risk_profile="conservative")
