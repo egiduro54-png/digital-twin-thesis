@@ -34,7 +34,7 @@ def make_price_series(n=500, seed=42, annual_return=0.08, annual_vol=0.20):
     daily_vol = annual_vol / np.sqrt(252)
     log_returns = rng.normal(daily_return, daily_vol, n)
     prices = 100 * np.exp(np.cumsum(log_returns))
-    dates = pd.date_range(end=pd.Timestamp.today(), periods=n, freq="B")
+    dates = pd.date_range(end=pd.offsets.BDay().rollback(pd.Timestamp.today().normalize()), periods=n, freq="B")
     return pd.Series(prices, index=dates)
 
 

@@ -18,7 +18,7 @@ def _prices(seed, n=500, sigma=0.20):
     rng = np.random.default_rng(seed)
     lr = rng.normal(0.0003, sigma / np.sqrt(252), n)
     p = 100 * np.exp(np.cumsum(lr))
-    return pd.Series(p, index=pd.date_range(end=pd.Timestamp.today(), periods=n, freq="B"))
+    return pd.Series(p, index=pd.date_range(end=pd.offsets.BDay().rollback(pd.Timestamp.today().normalize()), periods=n, freq="B"))
 
 
 def _asset(ticker, qty, price, sector="Technology", asset_class="Equity"):

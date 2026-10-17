@@ -141,6 +141,7 @@ def _init_state():
         "portfolio": None,
         "risk_analysis": None,
         "recommendations": None,
+        "optimization": None,
         "scenario_engine": None,
         "portfolio_name": "",
         "risk_profile": "moderate",
@@ -182,15 +183,24 @@ def _load_portfolio(csv_path: str, risk_profile: str, name: str):
         return
 
     try:
-        rec_engine = RecommendationEngine(portfolio, monitor, use_optimizer=False)
+        rec_engine = RecommendationEngine(portfolio, monitor)
         recs = rec_engine.generate_recommendations()
     except Exception as exc:
         st.warning(f"Οι προτάσεις δεν φορτώθηκαν (συνέχεια χωρίς αυτές): {exc}")
         recs = []
+        rec_engine = None
+
+    optimization = None
+    if rec_engine is not None:
+        try:
+            optimization = rec_engine.optimization_recommendation()
+        except Exception as exc:
+            st.warning(f"Η βελτιστοποίηση Markowitz δεν ολοκληρώθηκε: {exc}")
 
     st.session_state["portfolio"] = portfolio
     st.session_state["risk_analysis"] = analysis
     st.session_state["recommendations"] = recs
+    st.session_state["optimization"] = optimization
     st.session_state["scenario_engine"] = engine
     st.session_state["portfolio_name"] = name
     st.session_state["risk_profile"] = risk_profile
@@ -496,7 +506,7 @@ def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
     current_fi = alignment["current_fixed_income_pct"]
     target_eq = targets.get("equity", 0) * 100
     target_fi = targets.get("fixed_income", 0) * 100
-    target_alt = targets.get("alternative", 0) * 100
+    target_alt = targets.get("other", 0) * 100
 
     eq_drift = current_eq - target_eq
     fi_drift = current_fi - target_fi
@@ -506,6 +516,7 @@ def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
         return
 
     shift = abs(eq_drift) / 100 * total
+    stats_before, stats_after, missing = _rebalance_stats(portfolio, targets)
 
     st.markdown("#### Σύγκριση Πριν / Μετά την Ανακατανομή")
 
@@ -515,20 +526,17 @@ def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
         st.markdown("**Τρέχουσα κατανομή (Πριν)**")
         st.write(f"- Μετοχές (Equity): **{current_eq:.1f}%**")
         st.write(f"- Ομόλογα (Fixed Income): **{current_fi:.1f}%**")
-        vol_before = metrics.get("volatility_annual_pct") or 0
-        sharpe_before = metrics.get("sharpe_ratio") or 0
-        st.write(f"- Volatility: **{vol_before:.1f}%**")
-        st.write(f"- Sharpe Ratio: **{sharpe_before:.2f}**")
+        if stats_before:
+            st.write(f"- Volatility: **{stats_before['volatility'] * 100:.1f}%**")
+            st.write(f"- Sharpe Ratio: **{stats_before['sharpe']:.2f}**")
 
     with col_after:
         st.markdown("**Κατανομή-στόχος (Μετά)**")
         st.write(f"- Μετοχές (Equity): **{target_eq:.1f}%**")
         st.write(f"- Ομόλογα (Fixed Income): **{target_fi:.1f}%**")
-        # Rough estimates: each 10% shift to bonds reduces vol ~2.5% and adjusts sharpe
-        vol_after = max(vol_before + (target_eq - current_eq) / 10 * 2.5, 1.0)
-        sharpe_after = sharpe_before * (vol_before / vol_after) if vol_after > 0 else sharpe_before
-        st.write(f"- Volatility (εκτίμηση): **{vol_after:.1f}%**")
-        st.write(f"- Sharpe Ratio (εκτίμηση): **{sharpe_after:.2f}**")
+        if stats_after:
+            st.write(f"- Volatility (εκτίμηση): **{stats_after['volatility'] * 100:.1f}%**")
+            st.write(f"- Sharpe Ratio (εκτίμηση): **{stats_after['sharpe']:.2f}**")
 
     st.markdown("---")
     st.markdown("**Προτεινόμενες Κινήσεις:**")
@@ -555,10 +563,72 @@ def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
             f"Το προφίλ «{RISK_PROFILE_LABELS.get(rp, rp)}» προβλέπει επίσης "
             f"{target_alt:.0f}% σε εναλλακτικές κατηγορίες (π.χ. Real Estate, Commodities)."
         )
+    if missing:
+        st.warning(
+            "Το χαρτοφυλάκιο δεν περιέχει τίτλους κατηγορίας: " + ", ".join(missing)
+            + ". Το αντίστοιχο ποσοστό-στόχος κατανεμήθηκε αναλογικά στις υπάρχουσες "
+            "κατηγορίες, οπότε η εκτίμηση «Μετά» δεν αντιστοιχεί πλήρως στο προφίλ."
+        )
     st.caption(
-        "Σημείωση: Οι εκτιμήσεις Volatility/Sharpe μετά το rebalancing είναι προσεγγιστικές. "
-        "Για ακριβή ανάλυση δείτε τις αναλυτικές προτάσεις στην καρτέλα Προτάσεις Αναδιάρθρωσης."
+        "Σημείωση: Volatility και Sharpe πριν και μετά υπολογίζονται με τον ίδιο εκτιμητή "
+        "(ιστορικές ημερήσιες αποδόσεις, ετησιοποιημένες), διατηρώντας τις αναλογίες των "
+        "τίτλων εντός κάθε κατηγορίας, γι' αυτό μπορεί να διαφέρουν ελαφρά από τους δείκτες "
+        "της Επισκόπησης. Μια βελτιστοποιημένη εναλλακτική (Markowitz) υπάρχει στην καρτέλα "
+        "Προτάσεις Αναδιάρθρωσης."
     )
+
+
+_EQUITY_CLASSES = {"Equity", "Equity ETF", "International Equity", "International ETF",
+                   "Emerging Markets ETF", "Cryptocurrency"}
+_FI_CLASSES = {"Fixed Income", "Bond ETF"}
+
+
+def _rebalance_stats(portfolio, targets: dict):
+    """
+    Before/after stats for moving to the profile's class targets, keeping the
+    relative weights of holdings within each class. Returns
+    (stats_before, stats_after, missing_class_labels).
+    """
+    from src.optimizer import evaluate_weights
+    from src.portfolio import RISK_FREE_RATE
+
+    hist = portfolio.historical_prices
+    tickers = [t for t in portfolio.tickers if t in hist.columns]
+    if len(tickers) < 2:
+        return None, None, []
+    prices = hist[tickers].dropna()
+    current = portfolio.get_weights_dict()
+
+    def _group(asset):
+        if asset.asset_class in _EQUITY_CLASSES:
+            return "equity"
+        if asset.asset_class in _FI_CLASSES:
+            return "fixed_income"
+        return "other"
+
+    groups = {}
+    for a in portfolio.assets:
+        if a.ticker in tickers:
+            groups.setdefault(_group(a), []).append(a.ticker)
+
+    labels = {"equity": "Μετοχές", "fixed_income": "Ομόλογα", "other": "Λοιπά"}
+    shares = {g: targets.get(g, 0.0) for g in labels}
+    missing = [labels[g] for g, v in shares.items() if v > 0 and g not in groups]
+    present_total = sum(v for g, v in shares.items() if g in groups)
+    if present_total <= 0:
+        return None, None, missing
+
+    target_w = {}
+    for g, members in groups.items():
+        share = shares[g] / present_total
+        in_group = sum(current.get(t, 0.0) for t in members)
+        for t in members:
+            rel = current.get(t, 0.0) / in_group if in_group > 0 else 1.0 / len(members)
+            target_w[t] = share * rel
+
+    before = evaluate_weights(prices, current, RISK_FREE_RATE)
+    after = evaluate_weights(prices, target_w, RISK_FREE_RATE)
+    return before, after, missing
 
 
 def _plot_correlation_heatmap(portfolio):
@@ -1420,6 +1490,8 @@ def render_recommendations(recs: list):
             })
             st.dataframe(trades_df)
 
+    _render_optimization_alternative(st.session_state.get("optimization"))
+
     st.markdown("---")
     if st.button("📄 Εξαγωγή PDF για Πελάτη"):
         with st.spinner("Δημιουργία PDF..."):
@@ -1435,6 +1507,28 @@ def render_recommendations(recs: list):
             except Exception as e:
                 st.error(f"Σφάλμα PDF: {e}")
                 st.exception(e)
+
+
+def _render_optimization_alternative(opt: dict | None):
+    """Markowitz max-Sharpe allocation, shown as an alternative to the rule-based plan."""
+    st.markdown("---")
+    st.subheader("Εναλλακτική: Βελτιστοποίηση Markowitz (Efficient Frontier)")
+    st.caption(
+        "Πλήρης ανακατανομή που μεγιστοποιεί το Sharpe Ratio υπό τους περιορισμούς του "
+        "προφίλ σας. Είναι εναλλακτική λύση: οι συναλλαγές της δεν προστίθενται στη "
+        "Σύνοψη Συναλλαγών παραπάνω."
+    )
+    if not opt:
+        st.info("Δεν προέκυψε εφικτή βελτιστοποιημένη κατανομή για αυτό το χαρτοφυλάκιο.")
+        return
+    _render_recommendation_card(opt)
+    weights = opt.get("optimal_weights", {})
+    if weights:
+        df = pd.DataFrame(
+            [{"Ticker": t, "Βάρος-στόχος (%)": w} for t, w in
+             sorted(weights.items(), key=lambda kv: -kv[1])]
+        )
+        st.dataframe(df, hide_index=True)
 
 
 def _render_recommendation_card(rec: dict):
@@ -1526,7 +1620,7 @@ def render_docs():
 - **pandas / numpy** — Επεξεργασία χρονοσειρών τιμών και υπολογισμός στατιστικών.
 
 **Χρηματοοικονομική Ανάλυση**
-- **PyPortfolioOpt** (`pyportfolioopt`) — Βελτιστοποίηση χαρτοφυλακίου με βάση τον Efficient Frontier (Modern Portfolio Theory).
+- **SciPy** (`scipy.optimize`, SLSQP) — Βελτιστοποίηση Markowitz (max Sharpe) υπό περιορισμούς προφίλ κινδύνου και ορίου ανά θέση (`src/optimizer.py`).
 - **scikit-learn** — Χρησιμοποιείται εσωτερικά για στατιστικές βοηθητικές λειτουργίες.
 
 **Οπτικοποίηση**

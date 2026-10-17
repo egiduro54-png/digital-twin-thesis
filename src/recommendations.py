@@ -2,7 +2,8 @@
 recommendations.py
 
 Generates specific, ranked, explainable rebalancing recommendations
-from the risk monitor's alerts and (optionally) PyPortfolioOpt.
+from the risk monitor's alerts, plus an optional Markowitz alternative
+(SciPy, see optimizer.py).
 
 Each recommendation is a dict:
 {
@@ -51,7 +52,9 @@ class RecommendationEngine:
     portfolio : Portfolio
     risk_monitor : RiskMonitor (already constructed with the same portfolio)
     use_optimizer : bool
-        When True, also generate a PyPortfolioOpt efficient-frontier recommendation.
+        Kept for backward compatibility. The Markowitz optimisation is an
+        alternative full rebalance, exposed via optimization_recommendation()
+        and never mixed into generate_recommendations().
     """
 
     # Suggested replacements when reducing a position
@@ -63,7 +66,7 @@ class RecommendationEngine:
         self,
         portfolio: Portfolio,
         risk_monitor: RiskMonitor,
-        use_optimizer: bool = True,
+        use_optimizer: bool = False,
     ):
         self.portfolio = portfolio
         self.risk_monitor = risk_monitor
@@ -92,13 +95,6 @@ class RecommendationEngine:
                 for trade in r.get("trades", []):
                     if trade.get("action") == "SELL":
                         sold_tickers.add(trade["ticker"])
-
-        # Optionally add optimisation recommendation
-        if self.use_optimizer:
-            opt_rec = self._optimizer_recommendation(rec_id)
-            if opt_rec:
-                opt_rec["id"] = rec_id
-                recs.append(opt_rec)
 
         recs = self._rank(recs)
         # Re-number after ranking
@@ -641,20 +637,18 @@ class RecommendationEngine:
     # Efficient-Frontier Optimisation Recommendation
     # ------------------------------------------------------------------
 
-    def _optimizer_recommendation(self, rec_id: int) -> dict | None:
+    def optimization_recommendation(self, max_weight: float = 0.20) -> dict | None:
         """
-        Use PyPortfolioOpt to find the max-Sharpe allocation and recommend trades.
+        Markowitz max-Sharpe allocation (SciPy, see src/optimizer.py) under the
+        investor's risk-profile constraints.
+
+        This is an *alternative* full rebalance, not an addition to the
+        rule-based recommendations, so its trades must not be summed with them.
         """
-        try:
-            from pypfopt.efficient_frontier import EfficientFrontier
-            from pypfopt import risk_models, expected_returns
-        except ImportError:
-            logger.warning("PyPortfolioOpt not installed — skipping optimisation recommendation.")
-            return None
+        from .optimizer import optimize_max_sharpe, evaluate_weights
 
         hist = self.portfolio.historical_prices
         tickers = [t for t in self.portfolio.tickers if t in hist.columns]
-
         if len(tickers) < 2 or hist.empty:
             return None
 
@@ -662,103 +656,99 @@ class RecommendationEngine:
         if len(prices) < 60:
             return None
 
+        target = self.portfolio.TARGET_ALLOCATION.get(
+            self.portfolio.risk_profile, self.portfolio.TARGET_ALLOCATION["moderate"])
+        classes = {a.ticker: a.asset_class for a in self.portfolio.assets}
+
         try:
-            mu = expected_returns.mean_historical_return(prices)
-            cov = risk_models.sample_cov(prices)
-
-            ef = EfficientFrontier(mu, cov, weight_bounds=(0, 0.40))
-            ef.max_sharpe(risk_free_rate=RISK_FREE_RATE)
-            cleaned = ef.clean_weights()
-
-            # Calculate Sharpe before and after
-            ret, vol, sharpe_opt = ef.portfolio_performance(
-                risk_free_rate=RISK_FREE_RATE, verbose=False
+            result = optimize_max_sharpe(
+                prices, classes, RISK_FREE_RATE,
+                max_weight=max_weight,
+                target_equity=target["equity"],
+                target_fixed_income=target["fixed_income"],
             )
-
-            current_sharpe = self.portfolio.get_metrics().get("sharpe_ratio")
-
-            # Build trade list
-            total = self.portfolio.total_value
-            current_weights = self.portfolio.get_weights_dict()
-            changes = self.portfolio.get_allocation_changes_for_rebalance(cleaned)
-
-            if not changes:
-                return None
-
-            trades = []
-            for c in changes:
-                ticker = c["ticker"]
-                asset = next((a for a in self.portfolio.assets
-                              if a.ticker == ticker), None)
-                if asset is None:
-                    continue
-                shares = int(c["delta_value"] / asset.current_price) if asset.current_price > 0 else 0
-                trades.append({
-                    "ticker": ticker,
-                    "action": c["action"],
-                    "quantity": shares,
-                    "price": round(asset.current_price, 2),
-                    "value": c["delta_value"],
-                    "current_pct": c["current_pct"],
-                    "target_pct": c["target_pct"],
-                })
-
-            sharpe_before = round(current_sharpe, 3) if current_sharpe else None
-            sharpe_after = round(sharpe_opt, 3)
-            improvement = (
-                round((sharpe_opt - current_sharpe) / abs(current_sharpe) * 100, 1)
-                if current_sharpe else None
-            )
-
-            return {
-                "priority": "medium",
-                "category": "Optimisation",
-                "title": "Efficient Frontier Portfolio Optimisation",
-                "action": (
-                    f"Rebalance {len(trades)} positions to maximise risk-adjusted return. "
-                    f"Expected Sharpe ratio improvement: "
-                    f"{sharpe_before} → {sharpe_after}"
-                ),
-                "trades": trades,
-                "why": (
-                    "Modern Portfolio Theory (MPT) identifies combinations of assets "
-                    "that maximise return for a given level of risk. "
-                    "The current portfolio sits below the efficient frontier — "
-                    "meaning the same risk level could generate higher returns "
-                    "with a different allocation mix."
-                ),
-                "impact": {
-                    "before": {
-                        "sharpe_ratio": sharpe_before,
-                        "expected_return_pct": round(
-                            self.portfolio.calculate_expected_annual_return() * 100, 2
-                        ) if hasattr(self.portfolio, "calculate_expected_annual_return") else None,
-                    },
-                    "after": {
-                        "sharpe_ratio": sharpe_after,
-                        "expected_return_pct": round(ret * 100, 2),
-                        "expected_volatility_pct": round(vol * 100, 2),
-                    },
-                    "improvement": (
-                        f"Sharpe ratio improves by {improvement}% "
-                        f"({sharpe_before} → {sharpe_after})"
-                        if improvement else "Sharpe ratio optimised."
-                    ),
-                },
-                "confidence": "medium",
-                "alternative": (
-                    "This optimisation is based on historical data. "
-                    "Use 'minimum volatility' objective instead if capital preservation "
-                    "is the primary goal."
-                ),
-                "optimal_weights": {
-                    t: round(w * 100, 2) for t, w in cleaned.items() if w > 0.001
-                },
-            }
-
         except Exception as exc:
             logger.warning("Portfolio optimisation failed: %s", exc)
             return None
+
+        if not result.get("success"):
+            logger.info("Optimisation skipped: %s", result.get("message"))
+            return None
+
+        optimal = result["weights"]
+        current_weights = self.portfolio.get_weights_dict()
+        # Before/after measured with the same estimator so the comparison is fair
+        before = evaluate_weights(prices, current_weights, RISK_FREE_RATE)
+        after = result["stats"]
+
+        changes = self.portfolio.get_allocation_changes_for_rebalance(optimal)
+        trades = []
+        for c in changes:
+            asset = next((a for a in self.portfolio.assets if a.ticker == c["ticker"]), None)
+            if asset is None or asset.current_price <= 0:
+                continue
+            trades.append({
+                "ticker": c["ticker"],
+                "action": c["action"],
+                "quantity": int(c["delta_value"] / asset.current_price),
+                "price": round(asset.current_price, 2),
+                "value": c["delta_value"],
+                "current_pct": c["current_pct"],
+                "target_pct": c["target_pct"],
+            })
+        if not trades:
+            return None
+
+        sh_b, sh_a = before["sharpe"], after["sharpe"]
+        constraints = ", ".join(result["constraints_applied"])
+        skipped = result["constraints_skipped"]
+
+        return {
+            "priority": "low",
+            "category": "Βελτιστοποίηση (Markowitz)",
+            "title": "Εναλλακτική: Βελτιστοποίηση Efficient Frontier",
+            "action": (
+                f"Ανακατανομή {len(trades)} θέσεων για μεγιστοποίηση του Sharpe Ratio "
+                f"υπό περιορισμούς: {constraints}."
+            ),
+            "trades": trades,
+            "why": (
+                "Κατά τη Σύγχρονη Θεωρία Χαρτοφυλακίου (Markowitz, 1952), για δεδομένο "
+                "επίπεδο κινδύνου υπάρχει κατανομή με τη μέγιστη αναμενόμενη απόδοση. "
+                "Η λύση υπολογίζεται με αριθμητική βελτιστοποίηση (SciPy SLSQP) επί των "
+                "ιστορικών αποδόσεων και σέβεται το προφίλ κινδύνου και όριο ανά θέση."
+            ),
+            "impact": {
+                "before": {
+                    "sharpe_ratio": round(sh_b, 3),
+                    "expected_return_pct": round(before["expected_return"] * 100, 2),
+                    "volatility_pct": round(before["volatility"] * 100, 2),
+                },
+                "after": {
+                    "sharpe_ratio": round(sh_a, 3),
+                    "expected_return_pct": round(after["expected_return"] * 100, 2),
+                    "volatility_pct": round(after["volatility"] * 100, 2),
+                },
+                "improvement": (
+                    f"Sharpe (ίδιος εκτιμητής πριν/μετά): {sh_b:.2f} → {sh_a:.2f}"
+                    + (
+                        ". Το Sharpe μειώνεται επειδή η τρέχουσα κατανομή παραβιάζει το "
+                        "προφίλ κινδύνου· η συμμόρφωση με τους περιορισμούς του προφίλ "
+                        "έχει κόστος σε αναμενόμενη απόδοση."
+                        if sh_a < sh_b else ""
+                    )
+                ),
+            },
+            "confidence": "low",
+            "alternative": (
+                "Οι αναμενόμενες αποδόσεις εκτιμώνται από το ιστορικό και είναι θορυβώδεις· "
+                "η βέλτιστη κατανομή είναι ευαίσθητη σε αυτές. Προτιμήστε τις κανονιστικές "
+                "προτάσεις αν θέλετε μικρότερες, στοχευμένες αλλαγές."
+                + (f" Δεν εφαρμόστηκαν: {'; '.join(skipped)}." if skipped else "")
+            ),
+            "optimal_weights": {t: round(w * 100, 2) for t, w in optimal.items() if w > 0.001},
+            "constraints_skipped": skipped,
+        }
 
     # ------------------------------------------------------------------
     # Ranking
