@@ -999,8 +999,66 @@ def _render_rebalance_comparison(before_cmp: dict, after_cmp: dict):
         st.dataframe(pd.DataFrame(rows))
 
 
+def _render_resilience_index(portfolio):
+    """Composite Resilience Index with its six explained components."""
+    from src.resilience import compute_resilience, resilience_band
+
+    try:
+        ri = compute_resilience(portfolio)
+    except Exception as exc:
+        st.warning(f"Ο Δείκτης Ανθεκτικότητας δεν υπολογίστηκε: {exc}")
+        return
+
+    st.subheader("Δείκτης Ανθεκτικότητας Χαρτοφυλακίου (Resilience Index)")
+    st.caption(
+        "Σύνθετος δείκτης 0–100 (υψηλότερο = πιο ανθεκτικό) από έξι συνιστώσες με "
+        "σταθερά, προκαθορισμένα βάρη: αντοχή σε stress σενάρια, διαδοχικά shocks, "
+        "κίνδυνος ουράς, ταχύτητα ανάκαμψης, διαφοροποίηση και συγκέντρωση."
+    )
+    raw = ri["raw"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Resilience Index", f"{ri['score']:.0f} / 100", resilience_band(ri["score"]),
+              delta_color="off")
+    c2.metric("Μέση απώλεια σε stress σενάρια", f"−{raw['mean_stress_loss_pct']:.1f}%")
+    c3.metric("Διαδοχικά shocks (αγορά −20% → επιτόκια +2%)",
+              f"−{raw['sequential_loss_pct']:.1f}%")
+
+    raw_text = {
+        "stress": f"μέση απώλεια {raw['mean_stress_loss_pct']:.1f}% σε 6 σενάρια",
+        "sequential": f"απώλεια {raw['sequential_loss_pct']:.1f}%",
+        "downside": (f"μέση ημερήσια απώλεια {raw['daily_cvar95_pct']:.2f}% στο χειρότερο 5% των ημερών"
+                     if raw["daily_cvar95_pct"] is not None else "—"),
+        "recovery": (
+            f"{raw['recovery_days']:.0f} ημέρες ανάκαμψης"
+            + ("" if raw["recovered"] else " (ανοιχτό drawdown, με ποινή)")
+            + f", {raw['underwater_frac_pct']:.0f}% του χρόνου >5% κάτω από την κορυφή"
+            if raw["underwater_frac_pct"] is not None else "—"
+        ),
+        "diversification": (f"Diversification Ratio {raw['diversification_ratio']:.2f}"
+                            if raw["diversification_ratio"] is not None else "—"),
+        "concentration": (f"{raw['effective_positions']:.1f} ισοδύναμες θέσεις"
+                          if raw["effective_positions"] is not None else "—"),
+    }
+    rows = [{
+        "Συνιστώσα": ri["labels"][k],
+        "Βάρος": f"{ri['weights'][k]:.0%}",
+        "Βαθμός (0–100)": round(v * 100) if np.isfinite(v) else None,
+        "Συνεισφορά": round(100 * ri["weights"][k] * v, 1) if np.isfinite(v) else None,
+        "Μέτρηση": raw_text[k],
+    } for k, v in ri["components"].items()]
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+    weakest = min((k for k, v in ri["components"].items() if np.isfinite(v)),
+                  key=lambda k: ri["components"][k], default=None)
+    if weakest:
+        st.info(f"Πιο αδύναμη διάσταση: **{ri['labels'][weakest]}** "
+                f"({ri['components'][weakest] * 100:.0f}/100) — {raw_text[weakest]}.")
+    st.markdown("---")
+
+
 def render_scenarios(portfolio, engine: ScenarioEngine):
     st.header("Ανάλυση Σεναρίων — What-If Προσομοίωση")
+    _render_resilience_index(portfolio)
     st.markdown(
         "Επιλέξτε ένα σενάριο για να δείτε πώς θα αντιδρούσε το χαρτοφυλάκιό σας "
         "υπό διαφορετικές συνθήκες αγοράς."
