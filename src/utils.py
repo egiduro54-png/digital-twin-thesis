@@ -22,6 +22,11 @@ from .portfolio import Portfolio, Asset
 
 logger = logging.getLogger(__name__)
 
+REFERENCE_TICKERS = ["SPY", "ACWI", "AGG"]
+# Must cover RecommendationEngine.BOND_ETFS / INTL_ETFS / BROAD_MARKET_ETFS
+# defaults and the drawdown reserve (GLD, TLT)
+REBALANCE_CANDIDATES = ["BND", "TLT", "GLD", "VXUS", "EFA"]
+
 
 # ---------------------------------------------------------------------------
 # Portfolio Builder (full pipeline)
@@ -54,8 +59,14 @@ def build_portfolio(
     name = portfolio_name or Path(csv_path).stem.replace("_", " ").title()
     logger.info("Building portfolio '%s' with %d holdings", name, len(tickers))
 
-    # 2. Single batch download of historical data (replaces 20+ individual API calls)
-    historical = fetch_historical_data(tickers, years=history_years)
+    # 2. Single batch download of historical data (replaces 20+ individual API calls).
+    # Also fetched: SPY (beta), ACWI/AGG (Information Ratio benchmark) and the
+    # ETFs the recommendations may buy, so their trades use real prices and
+    # their effect on volatility can be estimated.
+    extra = REFERENCE_TICKERS + REBALANCE_CANDIDATES
+    historical = fetch_historical_data(list(dict.fromkeys(tickers + extra)), years=history_years)
+    if "ACWI" not in historical.columns and "SPY" in historical.columns:
+        historical["ACWI"] = historical["SPY"]
 
     # 3. Use last close from historical data as current price — avoids 10 extra requests
     last_closes: dict[str, float] = {}

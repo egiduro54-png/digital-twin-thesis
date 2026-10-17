@@ -122,3 +122,56 @@ class TestRecommendationEngine:
         recs = engine.generate_recommendations()
         critical = [r for r in recs if r["priority"] == "critical"]
         assert len(critical) == 0
+
+
+class TestCoordinatedPlan:
+    """All trade-producing steps edit one shared plan, so they must not overshoot."""
+
+    def _overweight_equity(self, profile="moderate"):
+        assets = [
+            _asset("SPY", 500, 100, "Equity ETF", "Equity"),
+            _asset("AAPL", 150, 100, "Technology", "Equity"),
+            _asset("MSFT", 150, 100, "Technology", "Equity"),
+            _asset("JPM", 100, 100, "Financials", "Equity"),
+            _asset("BND", 100, 100, "Bond ETF", "Fixed Income"),
+        ]
+        return _make_portfolio(assets, risk_profile=profile)
+
+    def _apply(self, p, trades):
+        w = {a.ticker: a.current_value for a in p.assets}
+        for t in trades:
+            sign = 1 if t["action"] == "BUY" else -1
+            w[t["ticker"]] = w.get(t["ticker"], 0.0) + sign * t["value"]
+        total = sum(w.values())
+        return {k: v / total for k, v in w.items()}
+
+    def test_trades_reach_profile_without_overshoot(self):
+        p = self._overweight_equity()
+        engine = RecommendationEngine(p, RiskMonitor(p))
+        recs = engine.generate_recommendations()
+        all_trades = [t for r in recs for t in r.get("trades", [])]
+        w = self._apply(p, all_trades)
+        bonds = w.get("BND", 0) + w.get("AGG", 0) + w.get("TLT", 0) + w.get("VCIT", 0)
+        target_fi = p.TARGET_ALLOCATION["moderate"]["fixed_income"]
+        # Within the drift caution band (5%) of the profile target, not beyond it
+        assert abs(bonds - target_fi) <= 0.05 + 0.01
+
+    def test_step_trades_sum_to_plan_trades(self):
+        p = self._overweight_equity()
+        engine = RecommendationEngine(p, RiskMonitor(p))
+        recs = engine.generate_recommendations()
+        net = {}
+        for t in (t for r in recs for t in r.get("trades", [])):
+            net[t["ticker"]] = net.get(t["ticker"], 0) + (1 if t["action"] == "BUY" else -1) * t["value"]
+        plan = {t["ticker"]: (1 if t["action"] == "BUY" else -1) * t["value"]
+                for t in engine.plan_trades()}
+        for tk, v in plan.items():
+            assert net.get(tk, 0) == pytest.approx(v, abs=0.01 * p.total_value)
+
+    def test_buys_are_funded_by_sells(self):
+        p = self._overweight_equity()
+        recs = RecommendationEngine(p, RiskMonitor(p)).generate_recommendations()
+        trades = [t for r in recs for t in r.get("trades", [])]
+        buys = sum(t["value"] for t in trades if t["action"] == "BUY")
+        sells = sum(t["value"] for t in trades if t["action"] == "SELL")
+        assert buys <= sells * 1.01 + 1

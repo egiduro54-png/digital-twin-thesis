@@ -32,6 +32,7 @@ import pandas as pd
 
 from .portfolio import Portfolio, RISK_FREE_RATE
 from .risk_monitor import RiskMonitor
+from .rebalance_plan import RebalancePlan
 
 logger = logging.getLogger(__name__)
 
@@ -79,29 +80,55 @@ class RecommendationEngine:
     def generate_recommendations(self) -> list[dict]:
         """
         Run full analysis and return ranked list of recommendations.
+
+        All trade-producing steps edit one shared RebalancePlan, in this order:
+        profile drift → correlation → concentration → international exposure
+        → volatility → drawdown reserve. Each step sees the result of the
+        previous ones, so its trades are only what is still needed and the
+        sum of all trades is exactly the move to the final plan.
         """
         analysis = self.risk_monitor.run_full_analysis()
-        recs: list[dict] = []
-        rec_id = 1
-        sold_tickers: set[str] = set()
+        alerts = analysis["alert"] + analysis["caution"]
+        plan = RebalancePlan(self.portfolio)
+        self.plan = plan
+        self._drift_applied = False
 
-        # Process alerts (severity=alert) first, then cautions
-        for alert in (analysis["alert"] + analysis["caution"]):
-            generated = self._rec_for_alert(alert, rec_id, sold_tickers=sold_tickers)
-            for r in generated:
-                r["id"] = rec_id
-                recs.append(r)
-                rec_id += 1
-                for trade in r.get("trades", []):
-                    if trade.get("action") == "SELL":
-                        sold_tickers.add(trade["ticker"])
+        steps = [
+            ("drift", self._rec_profile_drift),
+            ("correlation", self._rec_correlation),
+            ("concentration", self._rec_concentration),
+            ("international", self._rec_international),
+            ("volatility", self._rec_volatility),
+            ("drawdown", self._rec_drawdown),
+            ("holdings", self._rec_holdings),
+            ("sector", self._rec_sector),
+        ]
+        recs: list[dict] = []
+        for key, generator in steps:
+            step_alerts = [a for a in alerts if self._alert_kind(a) == key]
+            # Earlier steps can push a position over its limit (e.g. scaling up a
+            # single bond ETF), so concentration is always re-checked on the plan.
+            if key == "concentration" and not step_alerts and self._drift_applied:
+                step_alerts = [{"severity": "caution", "detail": {}}]
+            for alert in step_alerts:
+                severity = alert.get("severity", "caution")
+                before = plan.snapshot()
+                for r in generator(alert, severity, plan):
+                    if r.get("trades") is None:
+                        r["trades"] = plan.trades_since(before)
+                    recs.append(r)
 
         recs = self._rank(recs)
-        # Re-number after ranking
         for i, r in enumerate(recs, start=1):
             r["id"] = i
-
         return recs
+
+    def plan_trades(self) -> list[dict]:
+        """Net trades from the current portfolio to the final plan (after generate_recommendations)."""
+        plan = getattr(self, "plan", None)
+        if plan is None:
+            return []
+        return plan.trades_since(self.portfolio.get_weights_dict())
 
     def get_recommendation_summary(self) -> dict:
         recs = self.generate_recommendations()
@@ -115,196 +142,232 @@ class RecommendationEngine:
         }
 
     # ------------------------------------------------------------------
-    # Alert → Recommendation routing
+    # Alert → step routing
     # ------------------------------------------------------------------
 
-    def _rec_for_alert(self, alert: dict, rec_id: int, sold_tickers: set | None = None) -> list[dict]:
+    @staticmethod
+    def _alert_kind(alert: dict) -> str | None:
         category = alert.get("category", "")
-        severity = alert.get("severity", "caution")
-
+        title = alert.get("title", "")
+        if "Profile Drift" in category or "Απόκλιση Προφίλ" in category:
+            return "drift"
+        if "Correlation" in category or "Συσχέτιση" in category:
+            return "correlation"
         if "Concentration" in category or "Συγκέντρωση" in category:
-            return self._rec_concentration(alert, severity)
-        elif "Diversification" in category or "Διαφοροποίηση" in category:
-            return self._rec_diversification(alert, severity, sold_tickers=sold_tickers)
-        elif "Volatility" in category or "Μεταβλητότητα" in category:
-            return self._rec_volatility(alert, severity)
-        elif "Drawdown" in category:
-            return self._rec_drawdown(alert, severity)
-        elif "Correlation" in category or "Συσχέτιση" in category:
-            return self._rec_correlation(alert, severity)
-        elif "Profile Drift" in category or "Απόκλιση Προφίλ" in category:
-            return self._rec_profile_drift(alert, severity)
-        return []
+            # Top-5 has no direct trade; the single-position step covers it
+            return "concentration" if "Μεμονωμένο" in title or "Single" in title else None
+        if "Diversification" in category or "Διαφοροποίηση" in category:
+            if "Γεωγραφική" in title or "Geographic" in title:
+                return "international"
+            if "Αριθμός" in title or "Holdings" in title:
+                return "holdings"
+            if "Κλάδο" in title or "Sector" in title:
+                return "sector"
+            return None
+        if "Volatility" in category or "Μεταβλητότητα" in category:
+            return "volatility"
+        if "Drawdown" in category:
+            title_l = title
+            return "drawdown" if ("Μέγιστη Ιστορική" in title_l or "Maximum Historical" in title_l) else None
+        return None
+
+    def _covered_note(self, plan: RebalancePlan) -> str:
+        return ("Καλύπτεται από την αναδιάρθρωση για εναρμόνιση με το προφίλ κινδύνου, "
+                "χωρίς πρόσθετες συναλλαγές.")
 
     # ------------------------------------------------------------------
-    # Recommendation generators by category
+    # Steps (each edits the shared plan; trades = diff of that step)
     # ------------------------------------------------------------------
 
-    def _rec_concentration(self, alert: dict, severity: str) -> list[dict]:
+    def _rec_profile_drift(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
         detail = alert.get("detail", {})
-        largest_ticker = detail.get("largest_ticker", "")
-        largest_pct = detail.get("largest_pct", 0.0)
+        target = self.portfolio.TARGET_ALLOCATION.get(
+            self.portfolio.risk_profile, self.portfolio.TARGET_ALLOCATION["moderate"])
+        current_eq = detail.get("current_equity_pct", 100 * plan.group_share("equity"))
+        current_fi = detail.get("current_fixed_income_pct", 100 * plan.group_share("fixed_income"))
+        stats_before = plan.stats()
 
-        # Find the asset object
-        asset = next((a for a in self.portfolio.assets
-                      if a.ticker == largest_ticker), None)
-        if asset is None:
-            return []
+        added = []
+        # A class the profile needs but the portfolio lacks gets a default holding,
+        # seeded with an epsilon weight so scale_to has something to scale.
+        defaults = {"fixed_income": self.BOND_ETFS, "other": ["GLD"], "equity": self.BROAD_MARKET_ETFS}
+        for g, share in target.items():
+            if share > 0 and not plan.members(g):
+                t = plan.first_priced(defaults[g])
+                if t is not None:
+                    plan.w[t] = 1e-9
+                    added.append((g, t))
+        present = {g: s for g, s in target.items() if plan.members(g)}
+        norm = sum(present.values())
+        for g, s in present.items():
+            plan.scale_to(plan.members(g), s / norm if norm > 0 else 0.0)
+        self._drift_applied = True
 
-        # Target: the caution limit for this position type (security vs broad ETF)
-        target_pct = float(detail.get("target_pct", 20.0))
-        kind = "διαφοροποιημένα ETF" if detail.get("is_fund") else "μεμονωμένους τίτλους"
-        total = self.portfolio.total_value
-        excess_value = (largest_pct - target_pct) / 100.0 * total
+        new_eq = 100 * plan.group_share("equity")
+        new_fi = 100 * plan.group_share("fixed_income")
+        stats_after = plan.stats()
+        rp_label = self.portfolio.risk_profile
 
-        if excess_value < 50:
-            return []
+        why = (
+            f"Το χαρτοφυλάκιο έχει {current_eq:.1f}% μετοχές και {current_fi:.1f}% ομόλογα, "
+            f"ενώ το προφίλ «{rp_label}» προβλέπει {target['equity']*100:.0f}% / "
+            f"{target['fixed_income']*100:.0f}%. Οι κατηγορίες επαναφέρονται στους στόχους "
+            "κρατώντας τις αναλογίες των τίτλων μέσα σε κάθε κατηγορία."
+        )
+        if added:
+            why += " Προστίθενται: " + ", ".join(t for _, t in added) + \
+                   " (η κατηγορία έλειπε από το χαρτοφυλάκιο)."
+        if norm < 0.999:
+            why += (" Λείπει κατηγορία-στόχος χωρίς διαθέσιμο τίτλο· το ποσοστό της "
+                    "κατανεμήθηκε αναλογικά στις υπόλοιπες.")
 
-        price = asset.current_price
-        shares_to_sell = int(excess_value / price) if price > 0 else 0
-
-        trades = [{
-            "ticker": largest_ticker,
-            "action": "SELL",
-            "quantity": shares_to_sell,
-            "price": round(price, 2),
-            "value": round(shares_to_sell * price, 2),
-        }]
-
-        # Show impact on concentration metric
-        new_pct = (asset.current_value - excess_value) / total * 100
+        before_imp = {"equity_pct": round(current_eq, 1), "fixed_income_pct": round(current_fi, 1)}
+        after_imp = {"equity_pct": round(new_eq, 1), "fixed_income_pct": round(new_fi, 1)}
+        if stats_before and stats_after:
+            before_imp["volatility_pct"] = round(stats_before["volatility"] * 100, 1)
+            after_imp["volatility_pct"] = round(stats_after["volatility"] * 100, 1)
 
         return [{
             "priority": "critical" if severity == "alert" else "high",
-            "category": "Συγκέντρωση (Concentration)",
-            "title": f"Μείωση Συγκέντρωσης {largest_ticker}",
-            "action": f"Πώληση ${excess_value:,.0f} από {largest_ticker}",
-            "trades": trades,
-            "why": (
-                f"Το {largest_ticker} αποτελεί {largest_pct:.1f}% του χαρτοφυλακίου — "
-                f"πάνω από το ασφαλές όριο του {target_pct:.0f}% για {kind}. "
-                "Υψηλή συγκέντρωση σημαίνει ότι η πτώση ενός τίτλου έχει δυσανάλογη επίπτωση."
-            ),
+            "category": "Απόκλιση Προφίλ (Profile Drift)",
+            "title": "Αναδιάρθρωση για Εναρμόνιση με Προφίλ Κινδύνου",
+            "action": (f"Επαναφορά κατανομής σε {new_eq:.0f}% μετοχές / {new_fi:.0f}% ομόλογα "
+                       f"(από {current_eq:.0f}% / {current_fi:.0f}%)"),
+            "trades": None,
+            "why": why,
             "impact": {
-                "before": {"concentration_pct": round(largest_pct, 1)},
-                "after": {"concentration_pct": round(new_pct, 1)},
-                "improvement": f"Μειώνει το βάρος του {largest_ticker} από "
-                               f"{largest_pct:.1f}% σε {new_pct:.1f}%",
+                "before": before_imp,
+                "after": after_imp,
+                "improvement": f"Εναρμόνιση χαρτοφυλακίου με το προφίλ «{rp_label}».",
             },
-            "confidence": "high" if severity == "alert" else "medium",
+            "confidence": "high",
             "alternative": (
-                f"Μειώστε το {largest_ticker} στο {target_pct + 2:.0f}% αντί του {target_pct:.0f}% "
-                "για μικρότερη προσαρμογή που εξακολουθεί να βελτιώνει τον κίνδυνο."
+                "Αν οι συνθήκες της ζωής σας έχουν αλλάξει, "
+                "εξετάστε ενημέρωση του προφίλ κινδύνου αντί για αναδιάρθρωση."
             ),
         }]
 
-    def _rec_diversification(self, alert: dict, severity: str, sold_tickers: set | None = None) -> list[dict]:
-        sold_tickers = sold_tickers or set()
-        title = alert.get("title", "")
-        detail = alert.get("detail", {})
+    def _rec_correlation(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
+        pairs = alert.get("detail", {}).get("high_corr_pairs", [])
+        if not pairs:
+            return []
+        a, b = pairs[0]["asset_a"], pairs[0]["asset_b"]
+        corr = pairs[0]["correlation"]
+        if plan.w.get(a, 0) <= 0 or plan.w.get(b, 0) <= 0:
+            return []
+        reduce = a if plan.w[a] < plan.w[b] else b
+        g = plan.group(reduce)
+        receivers = [t for t in plan.members(g) if t not in (a, b)]
+        if not receivers:
+            receivers = [t for t in plan.w if plan.w[t] > 0 and t not in (a, b)]
+        if not receivers:
+            return []
+        moved = plan.move([reduce], receivers, plan.w[reduce] * 0.5)
+        if moved <= 0:
+            return []
+        return [{
+            "priority": _priority_for_severity(severity),
+            "category": "Συσχέτιση (Correlation)",
+            "title": f"Μείωση Επικαλυπτόμενης Έκθεσης ({a} / {b})",
+            "action": (f"Μείωση του {reduce} κατά 50% και ανακατανομή στους υπόλοιπους "
+                       "τίτλους της ίδιας κατηγορίας"),
+            "trades": None,
+            "why": (
+                f"Τα {a} και {b} έχουν συσχέτιση {corr:.2f}. Η κατοχή και των δύο προσθέτει "
+                "ελάχιστη διαφοροποίηση: όταν το ένα πέφτει, πέφτει και το άλλο."
+            ),
+            "impact": {
+                "before": {"pair_correlation": corr},
+                "after": {"description": f"Μειωμένη επικάλυψη μεταξύ {a} και {b}"},
+                "improvement": "Τα κεφάλαια μεταφέρονται σε λιγότερο συσχετισμένους τίτλους.",
+            },
+            "confidence": "medium",
+            "alternative": (
+                f"Διατηρήστε και τα δύο αν έχετε διαφορετική εκτίμηση για {a} έναντι {b}, "
+                "ή αντικαταστήστε το ένα με ETF άλλου κλάδου."
+            ),
+        }]
+
+    def _rec_concentration(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
+        """Cap every position above its limit, re-evaluated on the plan so far."""
+        th = self.risk_monitor.thresholds
         recs = []
-
-        if ("Geographic" in title or "Γεωγραφική" in title) and severity != "ok":
-            intl_pct = detail.get("international_pct", 0.0)
-            target_intl_pct = 10.0
-            total = self.portfolio.total_value
-            buy_amount = (target_intl_pct - intl_pct) / 100.0 * total
-            buy_amount = max(buy_amount, 0)
-
-            if buy_amount > 50:
-                # Skip any INTL_ETF that is already being sold by another recommendation
-                suggested_etf = next(
-                    (etf for etf in self.INTL_ETFS if etf not in sold_tickers),
-                    None,
-                )
-                if suggested_etf is None:
-                    return recs  # all candidates are being sold — skip this rec
-                price_estimate = 58.0
-                shares = int(buy_amount / price_estimate)
-
-                recs.append({
-                    "priority": _priority_for_severity(severity),
-                    "category": "Διαφοροποίηση (Diversification)",
-                    "title": "Προσθήκη Διεθνούς Έκθεσης",
-                    "action": f"Αγορά ${buy_amount:,.0f} σε {suggested_etf} (Διεθνές ETF)",
-                    "trades": [{
-                        "ticker": suggested_etf,
-                        "action": "BUY",
-                        "quantity": shares,
-                        "price": price_estimate,
-                        "value": round(shares * price_estimate, 2),
-                    }],
-                    "why": (
-                        f"Το χαρτοφυλάκιο έχει μόνο {intl_pct:.1f}% διεθνή έκθεση. "
-                        "Η συγκέντρωση αποκλειστικά σε αμερικανικές αγορές αυξάνει τον κίνδυνο μίας χώρας. "
-                        "Η προσθήκη διεθνών μετοχών μειώνει τη συσχέτιση με γεγονότα της αμερικανικής αγοράς."
-                    ),
-                    "impact": {
-                        "before": {"international_pct": round(intl_pct, 1)},
-                        "after": {"international_pct": round(target_intl_pct, 1)},
-                        "improvement": (
-                            f"Το χαρτοφυλάκιο αποκτά {target_intl_pct:.0f}% διεθνή έκθεση, "
-                            "μειώνοντας την εξάρτηση από αμερικανική αγορά."
-                        ),
-                    },
-                    "confidence": "medium",
-                    "alternative": (
-                        f"Χρησιμοποιήστε EFA (ανεπτυγμένες αγορές) ή IEMG (αναδυόμενες αγορές) "
-                        f"αντί για {suggested_etf}."
-                    ),
-                })
-
-        if ("Number of Holdings" in title or "Αριθμός" in title) and severity != "ok":
-            n = detail.get("num_holdings", 0)
+        for t in sorted(plan.w, key=lambda x: -plan.w[x]):
+            fund = plan.is_fund(t)
+            limit = th["fund_concentration_caution_pct" if fund else "concentration_caution_pct"] / 100
+            alert_lim = th["fund_concentration_alert_pct" if fund else "concentration_alert_pct"] / 100
+            w0 = plan.w.get(t, 0.0)
+            if w0 <= limit:
+                continue
+            g = plan.group(t)
+            receivers = [x for x in plan.members(g) if x != t]
+            if not receivers:
+                receivers = [x for x in plan.w if plan.w[x] > 0 and x != t]
+            if not receivers:
+                continue
+            before = plan.snapshot()
+            plan.move([t], receivers, w0 - limit)
+            kind = "διαφοροποιημένα ETF" if fund else "μεμονωμένους τίτλους"
+            sev = "alert" if w0 > alert_lim else "caution"
             recs.append({
-                "priority": _priority_for_severity(severity),
-                "category": "Διαφοροποίηση (Diversification)",
-                "title": "Αύξηση Αριθμού Θέσεων",
-                "action": "Προσθέστε 5-10 νέες θέσεις σε διαφορετικούς κλάδους",
-                "trades": [],
+                "priority": "critical" if sev == "alert" else "high",
+                "category": "Συγκέντρωση (Concentration)",
+                "title": f"Μείωση Συγκέντρωσης {t}",
+                "action": (f"Μείωση του {t} από {w0*100:.1f}% σε {limit*100:.0f}% και "
+                           "ανακατανομή στους υπόλοιπους τίτλους της ίδιας κατηγορίας"),
+                "trades": plan.trades_since(before),
                 "why": (
-                    f"Με μόνο {n} θέσεις, ένα πρόβλημα σε μία εταιρεία "
-                    "επηρεάζει σημαντικά το σύνολο του χαρτοφυλακίου. "
-                    "Περισσότερες θέσεις κατανέμουν τον κίνδυνο σε ανεξάρτητες εταιρείες."
+                    f"Το {t} αποτελεί {w0*100:.1f}% του χαρτοφυλακίου (μετά τα προηγούμενα "
+                    f"βήματα) — πάνω από το όριο {limit*100:.0f}% για {kind}. "
+                    "Υψηλή συγκέντρωση σημαίνει ότι η πτώση ενός τίτλου έχει δυσανάλογη επίπτωση."
                 ),
                 "impact": {
-                    "before": {"num_holdings": n},
-                    "after": {"num_holdings": max(n + 5, 10)},
-                    "improvement": "Μειώνει τον κίνδυνο από μεμονωμένο τίτλο.",
+                    "before": {"concentration_pct": round(w0 * 100, 1)},
+                    "after": {"concentration_pct": round(limit * 100, 1)},
+                    "improvement": f"Μειώνει το βάρος του {t} από {w0*100:.1f}% σε {limit*100:.0f}%",
                 },
-                "confidence": "medium",
+                "confidence": "high" if sev == "alert" else "medium",
                 "alternative": (
-                    "Χρησιμοποιήστε ευρεία ETF (SPY, QQQ) για άμεση διαφοροποίηση "
-                    "σε εκατοντάδες μετοχές με μία αγορά."
+                    f"Μειώστε το {t} στο {limit*100 + 2:.0f}% για μικρότερη προσαρμογή."
                 ),
             })
-
-        if "Sector" in title and severity != "ok":
-            top_sector = detail.get("top_sector", "")
-            top_pct = detail.get("top_sector_pct", 0.0)
-            recs.append({
-                "priority": _priority_for_severity(severity),
-                "category": "Διαφοροποίηση (Diversification)",
-                "title": f"Μείωση Συγκέντρωσης στον Κλάδο {top_sector}",
-                "action": f"Μειώστε την έκθεση στον {top_sector} από {top_pct:.0f}% κάτω από 40%",
-                "trades": [],
-                "why": (
-                    f"Ο κλάδος {top_sector} αντιπροσωπεύει {top_pct:.1f}% του χαρτοφυλακίου. "
-                    "Αν ο κλάδος αυτός αντιμετωπίσει αντίξοες συνθήκες (ρύθμιση, επιτόκια, ανταγωνισμός), "
-                    "η επίπτωση στο χαρτοφυλάκιο θα είναι ενισχυμένη."
-                ),
-                "impact": {
-                    "before": {"top_sector_pct": round(top_pct, 1)},
-                    "after": {"top_sector_pct": 40.0},
-                    "improvement": f"Μειώνει σημαντικά τον κίνδυνο του κλάδου {top_sector}.",
-                },
-                "confidence": "medium",
-                "alternative": "Στρέψτε κεφάλαια σε αμυντικούς κλάδους (Healthcare, Utilities).",
-            })
-
         return recs
 
-    def _rec_volatility(self, alert: dict, severity: str) -> list[dict]:
+    def _rec_international(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
+        th = self.risk_monitor.thresholds
+        intl = [t for t in plan.w if plan.w[t] > 0 and plan.is_international(t)]
+        cur = plan.share(intl)
+        if cur * 100 >= th["international_min_pct"]:
+            return []
+        target = 0.10
+        etf = plan.first_priced(self.INTL_ETFS)
+        us_equity = [t for t in plan.members("equity") if not plan.is_international(t)]
+        if etf is None or not us_equity:
+            return []
+        moved = plan.move(us_equity, etf, target - cur)
+        if moved <= 0:
+            return []
+        return [{
+            "priority": _priority_for_severity(severity),
+            "category": "Διαφοροποίηση (Diversification)",
+            "title": "Προσθήκη Διεθνούς Έκθεσης",
+            "action": (f"Μεταφορά {moved*100:.1f}% του χαρτοφυλακίου από αμερικανικές μετοχές "
+                       f"σε {etf} (διεθνές ETF)"),
+            "trades": None,
+            "why": (
+                f"Το χαρτοφυλάκιο έχει μόνο {cur*100:.1f}% διεθνή έκθεση. Η μεταφορά γίνεται "
+                "μέσα στις μετοχές, ώστε να μη μεταβληθεί η κατανομή του προφίλ."
+            ),
+            "impact": {
+                "before": {"international_pct": round(cur * 100, 1)},
+                "after": {"international_pct": round((cur + moved) * 100, 1)},
+                "improvement": "Μειώνει την εξάρτηση από την αμερικανική αγορά.",
+            },
+            "confidence": "medium",
+            "alternative": "Χρησιμοποιήστε EFA (ανεπτυγμένες) ή IEMG (αναδυόμενες αγορές).",
+        }]
+
+    def _rec_volatility(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
         detail = alert.get("detail", {})
         current_vol = detail.get("current_vol_pct", 0.0)
         target_vol = detail.get("target_vol_pct", 12.0)
@@ -319,8 +382,7 @@ class RecommendationEngine:
                 "trades": [],
                 "why": (
                     f"Η τρέχουσα μεταβλητότητα ({current_vol:.1f}%) είναι κάτω από τον στόχο "
-                    f"({target_vol:.1f}%). Το risk budget δεν αξιοποιείται πλήρως. "
-                    "Περισσότερες μετοχές θα μπορούσαν να βελτιώσουν τις μακροπρόθεσμες αποδόσεις."
+                    f"({target_vol:.1f}%). Το risk budget δεν αξιοποιείται πλήρως."
                 ),
                 "impact": {
                     "before": {"volatility_pct": current_vol},
@@ -331,307 +393,190 @@ class RecommendationEngine:
                 "alternative": "Διατηρήστε την τρέχουσα κατανομή αν προτιμάτε επιπλέον περιθώριο ασφαλείας.",
             }]
 
-        # Over-volatility: suggest shifting to bonds
-        total = self.portfolio.total_value
-        # Approximate: each 10% shift to bonds from stocks reduces vol by ~3%
-        pct_to_shift = min(deviation / 3.0 * 10.0, 30.0)
-        shift_amount = pct_to_shift / 100.0 * total
-
-        suggested_bond = self.BOND_ETFS[0]
-        bnd_price = next(
-            (a.current_price for a in self.portfolio.assets if a.ticker == suggested_bond),
-            73.0,
-        )
-        bnd_shares = int(shift_amount / bnd_price)
-        bnd_value = round(bnd_shares * bnd_price, 2)
-
-        # Find the largest equity asset to fund the bond purchase
-        equity_classes = {"Equity ETF", "Equity", "International Equity",
-                          "International ETF", "Emerging Markets ETF"}
-        eq_assets = [a for a in self.portfolio.assets if a.asset_class in equity_classes]
-        largest_eq = max(eq_assets, key=lambda a: a.current_value) if eq_assets else None
-
-        trades = []
-        actual_sell_value = 0.0
-        if largest_eq and largest_eq.current_price > 0:
-            # Cap sell to available holdings
-            sell_shares = min(int(shift_amount / largest_eq.current_price),
-                              int(largest_eq.quantity))
-            actual_sell_value = round(sell_shares * largest_eq.current_price, 2)
-            trades.append({
-                "ticker":   largest_eq.ticker,
-                "action":   "SELL",
-                "quantity": sell_shares,
-                "price":    round(largest_eq.current_price, 2),
-                "value":    actual_sell_value,
-            })
-
-        # BUY only what the actual sell proceeds can fund
-        fund_amount = actual_sell_value if actual_sell_value > 0 else shift_amount
-        bnd_shares  = int(fund_amount / bnd_price)
-        trades.append({
-            "ticker":   suggested_bond,
-            "action":   "BUY",
-            "quantity": bnd_shares,
-            "price":    bnd_price,
-            "value":    round(bnd_shares * bnd_price, 2),
-        })
-
-        return [{
+        base = {
             "priority": "critical" if severity == "alert" else "high",
             "category": "Μεταβλητότητα (Volatility)",
             "title": "Μείωση Μεταβλητότητας στον Στόχο",
-            "action": f"Αγορά ${shift_amount:,.0f} ομολόγων ({suggested_bond}), "
-                      f"χρηματοδοτούμενη από μείωση μετοχικών θέσεων",
-            "trades": trades,
-            "why": (
-                f"Η μεταβλητότητα του χαρτοφυλακίου ({current_vol:.1f}%) υπερβαίνει τον στόχο "
-                f"({target_vol:.1f}%) κατά {deviation:.1f} ποσοστιαίες μονάδες. "
-                "Υψηλότερη μεταβλητότητα σημαίνει μεγαλύτερες διακυμάνσεις αξίας, "
-                "αυξάνοντας τον κίνδυνο πανικόβλητων πωλήσεων στα χαμηλά της αγοράς."
-            ),
-            "impact": {
-                "before": {"volatility_pct": current_vol},
-                "after": {"volatility_pct": round(target_vol, 1)},
-                "improvement": f"Η μεταβλητότητα μειώνεται από {current_vol:.1f}% σε ~{target_vol:.1f}%",
-            },
             "confidence": "high",
-            "alternative": (
-                f"Στρέψτε σε εταιρικά ομόλογα για ελαφρώς υψηλότερη απόδοση "
-                f"διατηρώντας τη μείωση της μεταβλητότητας."
-            ),
-        }]
+            "alternative": "Εταιρικά ομόλογα για ελαφρώς υψηλότερη απόδοση με παρόμοια μείωση μεταβλητότητας.",
+        }
+        stats = plan.stats()
+        plan_vol = stats["volatility"] * 100 if stats else None
 
-    def _rec_drawdown(self, alert: dict, severity: str) -> list[dict]:
-        detail = alert.get("detail", {})
-        title = alert.get("title", "")
+        # When the profile rebalancing already brings the plan within tolerance,
+        # this alert needs no trades of its own.
+        tol = self.risk_monitor.thresholds["vol_deviation_caution_pct"]
+        if plan_vol is not None and plan_vol <= target_vol + tol:
+            return [{**base,
+                     "priority": "medium",
+                     "action": f"Η μεταβλητότητα του σχεδίου εκτιμάται σε {plan_vol:.1f}% (στόχος {target_vol:.1f}%).",
+                     "trades": [],
+                     "why": (f"Η τρέχουσα μεταβλητότητα ({current_vol:.1f}%) υπερβαίνει τον στόχο "
+                             f"({target_vol:.1f}%). " + (self._covered_note(plan) if self._drift_applied
+                             else "Τα προηγούμενα βήματα αρκούν.")),
+                     "impact": {"before": {"volatility_pct": current_vol},
+                                "after": {"volatility_pct": round(plan_vol, 1)},
+                                "improvement": f"Μεταβλητότητα {current_vol:.1f}% → ~{plan_vol:.1f}%"}}]
 
-        if "Maximum Historical" in title or "Μέγιστη Ιστορική" in title:
-            max_dd = detail.get("max_drawdown_pct", 0.0)
-            total = self.portfolio.total_value
-            defensive_amount = min(0.05 * total, 20000)
-
-            return [{
-                "priority": _priority_for_severity(severity),
-                "category": "Drawdown",
-                "title": "Προσθήκη Αμυντικού Αποθέματος έναντι Απωλειών",
-                "action": f"Κατανείμετε ${defensive_amount:,.0f} σε αμυντικά assets (TLT ή GLD)",
-                "trades": [
-                    {
-                        "ticker": "GLD",
-                        "action": "BUY",
-                        "quantity": int(defensive_amount / 2 / 185),
-                        "price": 185.0,
-                        "value": round(defensive_amount / 2, 2),
-                    },
-                    {
-                        "ticker": "TLT",
-                        "action": "BUY",
-                        "quantity": int(defensive_amount / 2 / 95),
-                        "price": 95.0,
-                        "value": round(defensive_amount / 2, 2),
-                    },
-                ],
-                "why": (
-                    f"Η ιστορική μέγιστη απώλεια {max_dd:.1f}% υποδηλώνει σημαντικές "
-                    "ζημιές σε συνθήκες αγοράς stres. "
-                    "Ο χρυσός (GLD) και τα μακροπρόθεσμα ομόλογα ΗΠΑ (TLT) αποδίδουν ιστορικά "
-                    "καλά σε πτώσεις μετοχών, λειτουργώντας ως αντισταθμιστικό μαξιλάρι."
-                ),
-                "impact": {
-                    "before": {"max_drawdown_pct": max_dd},
-                    "after": {"max_drawdown_pct_estimate": round(max_dd * 0.85, 1)},
-                    "improvement": "Μειώνει την αναμενόμενη χειρότερη απώλεια κατά ~15%.",
-                },
-                "confidence": "medium",
-                "alternative": "Χρησιμοποιήστε put options στο SPY ως εναλλακτική αντιστάθμιση (πιο σύνθετο).",
-            }]
-
-        return []
-
-    def _rec_correlation(self, alert: dict, severity: str) -> list[dict]:
-        detail = alert.get("detail", {})
-        high_pairs = detail.get("high_corr_pairs", [])
-
-        if not high_pairs:
+        bond = plan.first_priced(self.BOND_ETFS)
+        equities = plan.members("equity")
+        if bond is None or not equities:
             return []
 
-        # Suggest removing the most duplicative position
-        worst_pair = high_pairs[0]
-        a, b = worst_pair["asset_a"], worst_pair["asset_b"]
-        corr = worst_pair["correlation"]
-
-        asset_a = next((x for x in self.portfolio.assets if x.ticker == a), None)
-        asset_b = next((x for x in self.portfolio.assets if x.ticker == b), None)
-
-        if asset_a is None or asset_b is None:
-            return []
-
-        # Recommend selling smaller of the two
-        if asset_a.current_value >= asset_b.current_value:
-            keep, reduce = asset_a, asset_b
+        # Smallest equity→bond shift that reaches the target (bisection on the
+        # plan's estimated volatility), capped at 30% of the portfolio. Without
+        # enough history for an estimate, fall back to ~10% shift per 3% excess vol.
+        start = plan.snapshot()
+        # The profile allocation takes precedence: equities may only go down to
+        # the profile's lower tolerance (target − drift caution), otherwise this
+        # step would recreate the profile drift the previous step removed.
+        target_eq = self.portfolio.TARGET_ALLOCATION.get(
+            self.portfolio.risk_profile, self.portfolio.TARGET_ALLOCATION["moderate"])["equity"]
+        eq_floor = max(target_eq - self.risk_monitor.thresholds["drift_caution_pct"] / 100, 0.0)
+        cap = min(0.30, max(plan.share(equities) - eq_floor, 0.0))
+        if cap < 0.02:  # well inside the 5% profile tolerance: not worth chasing
+            return [{**base,
+                     "priority": "medium",
+                     "action": ("Ο στόχος μεταβλητότητας δεν επιτυγχάνεται με την κατανομή του προφίλ· "
+                                "δεν προτείνεται περαιτέρω μείωση μετοχών."),
+                     "trades": [],
+                     "why": (
+                         f"Η εκτιμώμενη μεταβλητότητα του σχεδίου ({plan_vol:.1f}%) " if plan_vol else
+                         "Η μεταβλητότητα "
+                     ) + (
+                         f"παραμένει πάνω από τον στόχο ({target_vol:.1f}%), αλλά οι μετοχές είναι ήδη "
+                         f"στο κατώτερο όριο του προφίλ ({eq_floor*100:.0f}%). Ο στόχος μεταβλητότητας "
+                         "και η κατανομή-στόχος του προφίλ είναι ασυμβίβαστοι για αυτούς τους τίτλους."
+                     ),
+                     "impact": {"before": {"volatility_pct": current_vol},
+                                "after": {"volatility_pct": round(plan_vol, 1) if plan_vol else current_vol},
+                                "improvement": "Χωρίς πρόσθετη αλλαγή κατανομής."},
+                     "alternative": ("Αντικαταστήστε μετοχές υψηλής μεταβλητότητας με αμυντικές "
+                                     "(π.χ. VIG, USMV) ή αναθεωρήστε το προφίλ κινδύνου.")}]
+        if stats is None:
+            shift = min(deviation / 3.0 * 0.10, cap)
         else:
-            keep, reduce = asset_b, asset_a
+            lo, hi, best = 0.0, cap, None
+            for _ in range(25):
+                mid = (lo + hi) / 2
+                plan.w = dict(start)
+                plan.move(equities, bond, mid)
+                s = plan.stats()
+                if s is None:
+                    break
+                if s["volatility"] * 100 <= target_vol:
+                    best, hi = mid, mid
+                else:
+                    lo = mid
+            shift = best if best is not None else cap
+        plan.w = dict(start)
+        plan.move(equities, bond, shift)
+        s = plan.stats()
+        new_vol = s["volatility"] * 100 if s else None
 
-        reduce_amount = reduce.current_value * 0.5  # sell half
-        shares_to_sell = int(reduce_amount / reduce.current_price) if reduce.current_price > 0 else 0
+        return [{**base,
+                 "action": (f"Μεταφορά {shift*100:.1f}% του χαρτοφυλακίου από μετοχές σε {bond}"),
+                 "trades": None,
+                 "why": (
+                     f"Η μεταβλητότητα ({current_vol:.1f}%) υπερβαίνει τον στόχο ({target_vol:.1f}%)"
+                     + (f" και, μετά τα προηγούμενα βήματα, παραμένει {plan_vol:.1f}%" if plan_vol else "")
+                     + ". Η μεταφορά υπολογίζεται ώστε η εκτιμώμενη μεταβλητότητα να φτάσει τον στόχο"
+                     + (f", περιορισμένη ώστε οι μετοχές να μην πέσουν κάτω από {eq_floor*100:.0f}% "
+                        "(όριο του προφίλ)· ο στόχος δεν επιτυγχάνεται πλήρως."
+                        if new_vol is not None and new_vol > target_vol + 0.05 else ".")
+                 ),
+                 "impact": {"before": {"volatility_pct": round(plan_vol or current_vol, 1)},
+                            "after": {"volatility_pct": round(new_vol, 1) if new_vol else target_vol},
+                            "improvement": (f"Μεταβλητότητα ~{new_vol:.1f}%" if new_vol
+                                            else "Μείωση μεταβλητότητας προς τον στόχο")}}]
 
+    def _rec_drawdown(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
+        max_dd = alert.get("detail", {}).get("max_drawdown_pct", 0.0)
+        base = {
+            "priority": _priority_for_severity(severity),
+            "category": "Drawdown",
+            "title": "Προσθήκη Αμυντικού Αποθέματος έναντι Απωλειών",
+            "confidence": "medium",
+            "alternative": "Put options στο SPY ως εναλλακτική αντιστάθμιση (πιο σύνθετο).",
+        }
+        if self._drift_applied:
+            # The profile rebalance already sets the defensive share; adding more
+            # would push the plan away from the profile again.
+            return [{**base,
+                     "priority": "low",
+                     "action": "Το αμυντικό ποσοστό ορίζεται από την αναδιάρθρωση προφίλ.",
+                     "trades": [],
+                     "why": (f"Η ιστορική μέγιστη απώλεια {max_dd:.1f}% είναι υψηλή. "
+                             + self._covered_note(plan)),
+                     "impact": {"before": {"max_drawdown_pct": max_dd},
+                                "after": {"description": "Βλ. πρόταση εναρμόνισης προφίλ"},
+                                "improvement": "Καμία πρόσθετη συναλλαγή."}}]
+
+        dests = [t for t in (plan.first_priced(["GLD"]), plan.first_priced(["TLT", "IEF"])) if t]
+        equities = plan.members("equity")
+        if not dests or not equities:
+            return []
+        amount = min(0.05, 20000 / plan.total if plan.total > 0 else 0.05)
+        before = plan.snapshot()
+        largest = max(equities, key=lambda t: plan.w[t])
+        moved = 0.0
+        for d in dests:
+            moved += plan.move([largest], d, amount / len(dests))
+        if moved <= 0:
+            return []
+        return [{**base,
+                 "action": (f"Μεταφορά {moved*100:.1f}% από {largest} σε αμυντικά assets "
+                            f"({', '.join(dests)})"),
+                 "trades": plan.trades_since(before),
+                 "why": (f"Η ιστορική μέγιστη απώλεια {max_dd:.1f}% υποδηλώνει σημαντικές ζημιές "
+                         "σε συνθήκες stress. Ο χρυσός και τα μακροπρόθεσμα ομόλογα ΗΠΑ "
+                         "λειτουργούν ιστορικά ως αντιστάθμιση σε πτώσεις μετοχών."),
+                 "impact": {"before": {"max_drawdown_pct": max_dd},
+                            "after": {"defensive_added_pct": round(moved * 100, 1)},
+                            "improvement": "Προσθέτει αντισταθμιστικό μαξιλάρι χρηματοδοτούμενο από μετοχές."}}]
+
+    def _rec_holdings(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
+        n = alert.get("detail", {}).get("num_holdings", 0)
         return [{
             "priority": _priority_for_severity(severity),
-            "category": "Συσχέτιση (Correlation)",
-            "title": f"Μείωση Επικαλυπτόμενης Έκθεσης ({a} / {b})",
-            "action": f"Μειώστε τη θέση {reduce.ticker} κατά 50% (πώληση ${reduce_amount:,.0f})",
-            "trades": [{
-                "ticker": reduce.ticker,
-                "action": "SELL",
-                "quantity": shares_to_sell,
-                "price": round(reduce.current_price, 2),
-                "value": round(reduce_amount, 2),
-            }],
+            "category": "Διαφοροποίηση (Diversification)",
+            "title": "Αύξηση Αριθμού Θέσεων",
+            "action": "Προσθέστε 5-10 νέες θέσεις σε διαφορετικούς κλάδους",
+            "trades": [],
             "why": (
-                f"Τα {a} και {b} έχουν συσχέτιση {corr:.2f} — πολύ υψηλή. "
-                "Η κατοχή και των δύο παρέχει ελάχιστη διαφοροποίηση: όταν το ένα πέφτει, "
-                "πέφτει και το άλλο. Ουσιαστικά πληρώνετε διπλά για την ίδια έκθεση."
+                f"Με μόνο {n} θέσεις, ένα πρόβλημα σε μία εταιρεία επηρεάζει σημαντικά "
+                "το σύνολο του χαρτοφυλακίου."
             ),
             "impact": {
-                "before": {"pair_correlation": corr, "num_high_corr_pairs": len(high_pairs)},
-                "after": {"description": f"Μειωμένη επικάλυψη μεταξύ {a} και {b}"},
-                "improvement": "Απελευθερώνει κεφάλαια για πραγματικά μη συσχετισμένα assets.",
+                "before": {"num_holdings": n},
+                "after": {"num_holdings": max(n + 5, 10)},
+                "improvement": "Μειώνει τον κίνδυνο από μεμονωμένο τίτλο.",
             },
             "confidence": "medium",
-            "alternative": (
-                f"Διατηρήστε και τα δύο αν έχετε διαφορετική εκτίμηση για {a} έναντι {b}, "
-                "αλλά αντικαταστήστε το ένα με ETF από διαφορετικό κλάδο."
-            ),
+            "alternative": "Ευρέα ETF (π.χ. SPY) δίνουν άμεση διαφοροποίηση με μία αγορά.",
         }]
 
-    def _rec_profile_drift(self, alert: dict, severity: str) -> list[dict]:
+    def _rec_sector(self, alert: dict, severity: str, plan: RebalancePlan) -> list[dict]:
         detail = alert.get("detail", {})
-        eq_drift = detail.get("equity_drift_pct", 0.0)
-        current_eq = detail.get("current_equity_pct", 0.0)
-        target_eq = detail.get("target_equity_pct", 0.0)
-        current_fi = detail.get("current_fixed_income_pct", 0.0)
-        target_fi = detail.get("target_fixed_income_pct", 0.0)
-
-        total = self.portfolio.total_value
-        shift_pct = abs(eq_drift)
-        shift_amount = shift_pct / 100.0 * total
-
-        rp_labels = {"conservative": "Συντηρητικό", "moderate": "Μέτριο", "aggressive": "Επιθετικό"}
-        rp_label = rp_labels.get(detail.get("risk_profile", ""), detail.get("risk_profile", ""))
-
-        # Build actual trades
-        equity_classes = {"Equity ETF", "Equity", "International Equity",
-                          "International ETF", "Emerging Markets ETF"}
-        bond_classes   = {"Bond ETF", "Fixed Income"}
-
-        eq_assets   = [a for a in self.portfolio.assets if a.asset_class in equity_classes]
-        bond_assets = [a for a in self.portfolio.assets if a.asset_class in bond_classes]
-        largest_eq  = max(eq_assets,   key=lambda a: a.current_value) if eq_assets   else None
-        largest_bond= max(bond_assets, key=lambda a: a.current_value) if bond_assets else None
-
-        trades = []
-        bnd_price = next(
-            (a.current_price for a in self.portfolio.assets if a.ticker == self.BOND_ETFS[0]),
-            73.0,
-        )
-
-        if eq_drift > 0:
-            # Too much equity → sell proportionally across all equity positions
-            action_str = (f"Πώληση ${shift_amount:,.0f} μετοχών, "
-                          f"αγορά ${shift_amount:,.0f} ομολόγων (BND) για αναλογία "
-                          f"{target_eq:.0f}/{target_fi:.0f} μετοχές/ομόλογα")
-            why = (
-                f"Το χαρτοφυλάκιο έχει {current_eq:.1f}% μετοχές αλλά ο στόχος είναι {target_eq:.1f}%. "
-                "Αυτό είναι πιο επιθετικό από το δηλωμένο προφίλ κινδύνου. "
-                "Η αναδιάρθρωση μειώνει τον κίνδυνο μεγάλης απώλειας σε πτώσεις αγοράς."
-            )
-            eq_total_value = sum(a.current_value for a in eq_assets)
-            # fraction of each position to sell (capped at 100%)
-            sell_frac = min(shift_amount / eq_total_value, 1.0) if eq_total_value > 0 else 0.0
-            actual_eq_sell = 0.0
-            for asset in sorted(eq_assets, key=lambda a: -a.current_value):
-                if asset.current_price <= 0:
-                    continue
-                sell_shares = min(int(asset.current_value * sell_frac / asset.current_price),
-                                  int(asset.quantity))
-                if sell_shares <= 0:
-                    continue
-                sell_val = round(sell_shares * asset.current_price, 2)
-                actual_eq_sell += sell_val
-                trades.append({
-                    "ticker": asset.ticker, "action": "SELL",
-                    "quantity": sell_shares,
-                    "price": round(asset.current_price, 2),
-                    "value": sell_val,
-                })
-            bnd_shares = int(actual_eq_sell / bnd_price)
-            trades.append({
-                "ticker": self.BOND_ETFS[0], "action": "BUY",
-                "quantity": bnd_shares, "price": bnd_price,
-                "value": round(bnd_shares * bnd_price, 2),
-            })
-        else:
-            # Too little equity → sell bonds proportionally, buy equities
-            action_str = (f"Μεταφορά ${shift_amount:,.0f} από ομόλογα σε μετοχές (SPY) "
-                          f"για αναλογία {target_eq:.0f}/{target_fi:.0f} μετοχές/ομόλογα")
-            why = (
-                f"Το χαρτοφυλάκιο έχει {current_eq:.1f}% μετοχές αλλά ο στόχος είναι {target_eq:.1f}%. "
-                "Αυτό είναι πολύ συντηρητικό για το προφίλ σας, "
-                "μειώνοντας πιθανώς τις μακροπρόθεσμες αποδόσεις περιττά."
-            )
-            bond_total = sum(a.current_value for a in bond_assets)
-            sell_frac = min(shift_amount / bond_total, 1.0) if bond_total > 0 else 0.0
-            actual_bond_sell = 0.0
-            for asset in sorted(bond_assets, key=lambda a: -a.current_value):
-                if asset.current_price <= 0:
-                    continue
-                sell_shares = min(int(asset.current_value * sell_frac / asset.current_price),
-                                  int(asset.quantity))
-                if sell_shares <= 0:
-                    continue
-                sell_val = round(sell_shares * asset.current_price, 2)
-                actual_bond_sell += sell_val
-                trades.append({
-                    "ticker": asset.ticker, "action": "SELL",
-                    "quantity": sell_shares,
-                    "price": round(asset.current_price, 2),
-                    "value": sell_val,
-                })
-            spy_price  = next(
-                (a.current_price for a in self.portfolio.assets if a.ticker == "SPY"), 450.0
-            )
-            fund_spy   = actual_bond_sell if actual_bond_sell > 0 else shift_amount
-            spy_shares = int(fund_spy / spy_price)
-            trades.append({
-                "ticker": self.BROAD_MARKET_ETFS[0], "action": "BUY",
-                "quantity": spy_shares, "price": round(spy_price, 2),
-                "value": round(spy_shares * spy_price, 2),
-            })
-
+        top_sector = detail.get("top_sector", "")
+        top_pct = detail.get("top_sector_pct", 0.0)
         return [{
-            "priority": "critical" if severity == "alert" else "high",
-            "category": "Απόκλιση Προφίλ (Profile Drift)",
-            "title": "Αναδιάρθρωση για Εναρμόνιση με Προφίλ Κινδύνου",
-            "action": action_str,
-            "trades": trades,
-            "why": why,
-            "impact": {
-                "before": {
-                    "equity_pct": round(current_eq, 1),
-                    "fixed_income_pct": round(current_fi, 1),
-                },
-                "after": {
-                    "equity_pct": round(target_eq, 1),
-                    "fixed_income_pct": round(target_fi, 1),
-                },
-                "improvement": f"Εναρμόνιση χαρτοφυλακίου με προφίλ '{rp_label}'.",
-            },
-            "confidence": "high",
-            "alternative": (
-                "Αν οι συνθήκες της ζωής σας έχουν αλλάξει, "
-                "εξετάστε ενημέρωση του προφίλ κινδύνου αντί για αναδιάρθρωση."
+            "priority": _priority_for_severity(severity),
+            "category": "Διαφοροποίηση (Diversification)",
+            "title": f"Μείωση Συγκέντρωσης στον Κλάδο {top_sector}",
+            "action": f"Μειώστε την έκθεση στον {top_sector} από {top_pct:.0f}% κάτω από 40%",
+            "trades": [],
+            "why": (
+                f"Ο κλάδος {top_sector} αντιπροσωπεύει {top_pct:.1f}% του χαρτοφυλακίου. "
+                "Αν ο κλάδος αντιμετωπίσει αντίξοες συνθήκες, η επίπτωση θα είναι ενισχυμένη."
             ),
+            "impact": {
+                "before": {"top_sector_pct": round(top_pct, 1)},
+                "after": {"top_sector_pct": 40.0},
+                "improvement": f"Μειώνει τον κίνδυνο του κλάδου {top_sector}.",
+            },
+            "confidence": "medium",
+            "alternative": "Στρέψτε κεφάλαια σε αμυντικούς κλάδους (Healthcare, Utilities).",
         }]
 
     # ------------------------------------------------------------------

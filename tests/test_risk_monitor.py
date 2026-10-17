@@ -246,3 +246,28 @@ class TestFullAnalysis:
         result = monitor.run_full_analysis()
         # 90% in one stock is definitely an alert
         assert result["summary"]["alert"] > 0
+
+
+class TestThresholdEdges:
+    def _p(self, assets):
+        hist = pd.DataFrame({a.ticker: _prices(i).values for i, a in enumerate(assets)},
+                            index=_prices(0).index)
+        return _portfolio(assets, hist)
+
+    def test_exactly_min_holdings_is_ok(self):
+        assets = [_asset(f"T{i}", 100, 100) for i in range(10)]
+        alerts = RiskMonitor(self._p(assets)).check_diversification()
+        holdings = next(a for a in alerts if "Αριθμός Θέσεων" in a["title"])
+        assert holdings["severity"] == "ok"
+
+    def test_top5_ignores_broad_etfs(self):
+        assets = [
+            _asset("BND", 550, 100, "Bond ETF", "Fixed Income"),
+            _asset("SPY", 250, 100, "Equity ETF", "Equity"),
+            _asset("VXUS", 100, 100, "International ETF", "International Equity"),
+            _asset("GLD", 100, 100, "Commodities ETF", "Commodity"),
+        ]
+        alerts = RiskMonitor(self._p(assets)).check_concentration()
+        top5 = next(a for a in alerts if "5 Κορυφαίους" in a["title"])
+        assert top5["detail"]["top5_pct"] == pytest.approx(10.0, abs=0.5)
+        assert top5["severity"] == "ok"

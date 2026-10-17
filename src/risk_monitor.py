@@ -127,13 +127,20 @@ class RiskMonitor:
         composition = self.portfolio.get_composition()
         conc = composition.get("concentration", {})
 
-        top5 = conc.get("top_5_assets_pct", 0.0)
         hhi = conc.get("herfindahl_index", 0.0)
 
         # Single-asset concentration: each position is judged against the limit
         # for its type (individual security vs diversified fund); the reported
         # position is the most severe breach, ties broken by weight.
         total = self.portfolio.total_value
+        # Top-5 concentration over individual securities only: like the single
+        # position check, a broad ETF is already diversified and is not one bet.
+        sec_w = sorted(
+            (a.current_value / total * 100 for a in self.portfolio.assets
+             if total > 0 and not is_diversified_fund(a)),
+            reverse=True,
+        )
+        top5 = float(sum(sec_w[:5]))
         rank = {"ok": 0, "caution": 1, "alert": 2}
         flagged = None  # (severity, pct, ticker, is_fund)
         for a in self.portfolio.assets:
@@ -180,7 +187,7 @@ class RiskMonitor:
             },
         })
 
-        # Top-5 concentration
+        # Top-5 concentration (computed above over individual securities only)
         sev5 = _severity(
             top5,
             self.thresholds["top5_caution_pct"],
@@ -191,7 +198,8 @@ class RiskMonitor:
             "severity": sev5,
             "title": "Συγκέντρωση στους 5 Κορυφαίους Τίτλους",
             "description": (
-                f"Οι 5 μεγαλύτερες θέσεις καλύπτουν {top5:.1f}% του χαρτοφυλακίου. "
+                f"Οι 5 μεγαλύτεροι μεμονωμένοι τίτλοι (εκτός διαφοροποιημένων ETF) "
+                f"καλύπτουν {top5:.1f}% του χαρτοφυλακίου. "
                 f"Όριο προσοχής: >{self.thresholds['top5_caution_pct']}%."
             ),
             "recommendation": (
@@ -213,12 +221,13 @@ class RiskMonitor:
         n = len(self.portfolio.assets)
 
         # Number of holdings
-        sev_n = _severity(
-            n,
-            self.thresholds["min_holdings_caution"],
-            self.thresholds["min_holdings_alert"],
-            higher_is_worse=False,
-        )
+        # Strictly fewer than the minimum: exactly min_holdings_caution positions is fine
+        if n < self.thresholds["min_holdings_alert"]:
+            sev_n = "alert"
+        elif n < self.thresholds["min_holdings_caution"]:
+            sev_n = "caution"
+        else:
+            sev_n = "ok"
         alerts.append({
             "category": "Διαφοροποίηση (Diversification)",
             "severity": sev_n,

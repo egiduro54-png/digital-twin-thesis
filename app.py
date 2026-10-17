@@ -1285,24 +1285,24 @@ def _render_alert_card(alert: dict):
 
 def _consolidate_trades(trades: list, portfolio) -> list:
     """
-    Merge duplicate ticker+action rows, cap SELLs to holdings,
+    Net trades per ticker (BUY minus SELL), cap SELLs to holdings,
     and scale BUYs so total BUY never exceeds total SELL proceeds.
     """
     holdings = {}
     if portfolio:
         holdings = {a.ticker: int(a.quantity) for a in portfolio.assets}
 
-    # Aggregate by (ticker, action)
-    agg: dict[tuple, dict] = {}
+    # Net BUY against SELL per ticker: one step may sell what a later step buys
+    net: dict[str, dict] = {}
     for t in trades:
-        key = (t["ticker"], t["action"])
-        if key not in agg:
-            agg[key] = {"quantity": 0, "price": t.get("price", 0.0)}
-        agg[key]["quantity"] += t.get("quantity", 0)
+        sign = 1 if t["action"] == "BUY" else -1
+        row = net.setdefault(t["ticker"], {"quantity": 0, "price": t.get("price", 0.0)})
+        row["quantity"] += sign * t.get("quantity", 0)
 
     sells, buys = [], []
-    for (ticker, action), data in agg.items():
-        qty   = data["quantity"]
+    for ticker, data in net.items():
+        action = "BUY" if data["quantity"] > 0 else "SELL"
+        qty   = abs(data["quantity"])
         price = data["price"]
         if action == "SELL":
             if ticker in holdings:
