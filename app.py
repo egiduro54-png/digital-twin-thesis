@@ -3294,10 +3294,16 @@ def _render_holdout_verdict(holdout: pd.DataFrame, main: pd.DataFrame | None):
                    + "\n\n".join(lines))
     else:
         dn = row(holdout, "ri_downside")
-        cvar = (f" Η συνιστώσα CVaR μόνη της γενικεύει (Spearman {dn['spearman']:.3f}), άρα "
-                "αυτό που δεν γενικεύει είναι ο συνδυασμός των υπόλοιπων συνιστωσών."
-                if dn is not None and _significance(dn["spearman_ci"]) == "σημαντικά καλύτερο"
-                else "")
+        cvar = ""
+        if dn is not None and _significance(dn["spearman_ci"]) == "σημαντικά καλύτερο":
+            vs = _significance(dn.get("spearman_ci_vs_vol", ""))
+            rel = {"σημαντικά καλύτερο": "καλύτερα από τη μεταβλητότητα",
+                   "σημαντικά χειρότερο": "αλλά χειρότερα από τη μεταβλητότητα"}.get(
+                vs, "όσο και η ιστορική μεταβλητότητα, όχι καλύτερα")
+            cvar = (f" Η συνιστώσα CVaR μόνη της γενικεύει έναντι του Baseline "
+                    f"({dn['spearman_diff']:+.3f} {dn['spearman_ci']}), {rel} "
+                    f"({dn['spearman_diff_vs_vol']:+.3f} {dn['spearman_ci_vs_vol']}). Αυτό που "
+                    "δεν γενικεύει είναι ο συνδυασμός των υπόλοιπων συνιστωσών.")
         st.warning(
             "**Συμπέρασμα: ο Resilience Index δεν γενικεύεται ως προβλέπτης κινδύνου.** Το "
             "πλεονέκτημά του στο κύριο σύνολο δεν επαναλαμβάνεται σε τίτλους που δεν "
