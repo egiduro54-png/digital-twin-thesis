@@ -50,7 +50,9 @@ RISK_PROFILES = ["conservative", "moderate", "aggressive"]
 # Holdout universe: tickers never used while designing or tuning the system
 # (the main experiment uses validation.TICKER_META). Used to check that
 # results, in particular the Resilience Index weights, are not fitted to the
-# main universe.
+# main universe. Excluded because they were seen during development: KO, PG,
+# QQQ, VNQ (sample portfolios, crisis-replay check) and EFA (a candidate ETF
+# the recommendations buy).
 def _m(sector, asset_class="Equity"):
     return {"sector": sector, "asset_class": asset_class, "country": "US"}
 
@@ -58,8 +60,8 @@ def _m(sector, asset_class="Equity"):
 HOLDOUT_META: dict[str, dict] = {
     "CSCO": _m("Technology"), "ORCL": _m("Technology"), "INTC": _m("Technology"),
     "IBM": _m("Technology"), "QCOM": _m("Technology"),
-    "KO": _m("Consumer Staples"), "PEP": _m("Consumer Staples"),
-    "PG": _m("Consumer Staples"), "COST": _m("Consumer Staples"),
+    "PEP": _m("Consumer Staples"), "COST": _m("Consumer Staples"),
+    "MDLZ": _m("Consumer Staples"),
     "MRK": _m("Healthcare"), "ABT": _m("Healthcare"), "AMGN": _m("Healthcare"),
     "C": _m("Financials"), "WFC": _m("Financials"), "MS": _m("Financials"),
     "COP": _m("Energy"), "SLB": _m("Energy"),
@@ -68,11 +70,11 @@ HOLDOUT_META: dict[str, dict] = {
     "MCD": _m("Consumer Discretionary"), "NKE": _m("Consumer Discretionary"),
     "LOW": _m("Consumer Discretionary"),
     "NEE": _m("Utilities"), "DUK": _m("Utilities"),
-    "IWM": _m("Equity ETF"), "QQQ": _m("Equity ETF"),
-    "EFA": _m("International ETF", "International Equity"),
+    "IWM": _m("Equity ETF"), "DIA": _m("Equity ETF"),
+    "EWJ": _m("International ETF", "International Equity"),
     "IEF": _m("Bond ETF", "Fixed Income"), "SHY": _m("Bond ETF", "Fixed Income"),
     "LQD": _m("Bond ETF", "Fixed Income"),
-    "VNQ": _m("Real Estate ETF", "Real Estate"),
+    "IYR": _m("Real Estate ETF", "Real Estate"),
     "SLV": _m("Commodities ETF", "Commodity"),
 }
 UNIVERSES = {"main": TICKER_META, "holdout": HOLDOUT_META}
