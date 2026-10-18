@@ -101,3 +101,44 @@ class TestVolatilityScaling:
         crisis = p.apply_scenario({**SCEN, "volatility_multiplier": 4.0}).calculate_sharpe_ratio()
         assert np.isfinite(crisis)
         assert crisis < live
+
+
+class TestHistoricalReplay:
+    REPLAY = {**SCEN, "market_change": -0.55,
+              "replay_returns": {"HI": -0.70, "SPY": -0.55},
+              "replay_start": "2007-10-09", "replay_end": "2009-03-09"}
+
+    def test_replayed_ticker_gets_actual_return(self):
+        hist = _market_and_assets()  # history ends today, after the crisis
+        p = Portfolio([_asset("HI", 100), _asset("LO", 100), _asset("SPY", 100, "Equity ETF")], hist)
+        px = {a.ticker: a.current_price for a in p.apply_scenario(self.REPLAY).assets}
+        assert px["HI"] == pytest.approx(30.0)
+        assert px["SPY"] == pytest.approx(45.0)
+        # LO has no recorded return: factor model with its own beta
+        assert px["LO"] == pytest.approx(100 * (1 + p.asset_betas()["LO"] * -0.55))
+
+    def test_no_replay_when_history_ends_before_crisis(self):
+        # A backtest whose analysis window ends before the crisis must not see it
+        hist = _market_and_assets()
+        hist.index = pd.date_range(end="2008-12-31", periods=len(hist), freq="B")
+        p = Portfolio([_asset("HI", 100)], hist)
+        px = p.apply_scenario(self.REPLAY).assets[0].current_price
+        assert px == pytest.approx(100 * (1 + p.asset_betas()["HI"] * -0.55))
+
+    def test_standard_crises_are_replays(self):
+        from src.scenario_engine import STANDARD_SCENARIOS
+        for sid in ("financial_crisis_2008", "covid_crash_2020"):
+            sc = STANDARD_SCENARIOS[sid]
+            assert sc.get("replay_returns"), sid
+            assert sc["market_change"] == pytest.approx(sc["replay_returns"]["SPY"])
+
+
+class TestAltBetas:
+    def test_low_beta_commodity_is_a_hedge(self):
+        hist = _market_and_assets().rename(columns={"LO": "GLD"})
+        p = Portfolio([_asset("GLD", 100, "Commodity", "Commodities ETF"),
+                       _asset("SPY", 100, "Equity ETF")], hist)
+        b = p.asset_betas()["GLD"]
+        assert b == pytest.approx(0.3, abs=0.1)  # raw beta, no Blume shrinkage
+        px = {a.ticker: a.current_price for a in p.apply_scenario(SCEN).assets}
+        assert px["GLD"] > px["SPY"]

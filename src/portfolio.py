@@ -29,6 +29,8 @@ EQUITY_ASSET_CLASSES = ("Equity", "Equity ETF", "International Equity",
 
 # Blume (1971) adjustment: β_adj = 0.67·β + 0.33
 BLUME_WEIGHT = 0.67
+# Non-equity classes whose market exposure is also estimated from data
+BETA_ALT_CLASSES = ("Real Estate", "Real Estate ETF", "Commodity", "Commodities ETF")
 
 # Approximate effective/modified duration (years) of common bond ETFs, used
 # for the rate sensitivity of each fund in scenarios
@@ -632,11 +634,23 @@ class Portfolio:
 
         betas = self.asset_betas()
 
+        # Historical replay: a ticker with a recorded crisis return gets exactly
+        # that return. Only allowed when the crisis ended before the end of the
+        # price history, so a backtest never uses returns from its own future.
+        replay = scenario.get("replay_returns") or {}
+        if replay and not self.historical_prices.empty:
+            last = self.historical_prices.index[-1]
+            if pd.Timestamp(scenario.get("replay_end", "2100-01-01")) > last:
+                replay = {}
+
         new_assets = []
         for asset in self.assets:
             new_price = asset.current_price
 
-            if asset.asset_class in EQUITY_ASSET_CLASSES:
+            if asset.ticker in replay:
+                new_price = asset.current_price * (1 + replay[asset.ticker])
+
+            elif asset.asset_class in EQUITY_ASSET_CLASSES:
                 # Market move scaled by the asset's own beta, plus any sector shock
                 sector_adj = sector_overrides.get(asset.sector, 0.0)
                 total_change = betas.get(asset.ticker, 1.0) * market_change + sector_adj
@@ -651,13 +665,19 @@ class Portfolio:
                 new_price *= (1 + market_change * 0.1)  # bonds partially follow
 
             elif asset.asset_class in ("Real Estate", "Real Estate ETF"):
-                rate_adj = rate_change * -2.0  # REITs sensitive to rates
-                new_price = asset.current_price * (1 + market_change * 0.8 + rate_adj)
+                # Market exposure from the REIT's own beta (fallback 0.8);
+                # leverage makes REITs additionally rate sensitive
+                beta = betas.get(asset.ticker, 0.8)
+                rate_adj = rate_change * -2.0
+                new_price = asset.current_price * (1 + beta * market_change + rate_adj)
 
             elif asset.asset_class in ("Commodity", "Commodities ETF"):
-                # Rate cuts → negative real rates → commodities rise; rate hikes → fall
+                # Market exposure from the asset's own beta: near zero for gold,
+                # which is what makes it a hedge (fallback 0.5). Higher rates
+                # raise the cost of holding a non-yielding asset.
+                beta = betas.get(asset.ticker, 0.5)
                 inflation_hedge = -rate_change * 0.5
-                new_price = asset.current_price * (1 + market_change * 0.5 + inflation_hedge)
+                new_price = asset.current_price * (1 + beta * market_change + inflation_hedge)
 
             new_price = max(new_price, 0.0)  # prices cannot go negative
 
@@ -698,9 +718,12 @@ class Portfolio:
 
     def asset_betas(self, market_ticker: str = "SPY") -> dict[str, float]:
         """
-        Beta of each equity holding against the market, Blume-adjusted
-        (0.67·β + 0.33) to shrink noisy estimates towards 1. Assets without
-        enough history, or a portfolio without market data, default to 1.
+        Beta of each equity, real-estate and commodity holding against the
+        market. Equity betas are Blume-adjusted (0.67·β + 0.33) to shrink noisy
+        estimates towards 1. Real estate and commodities keep the raw estimate
+        (clipped to [−0.5, 2]): shrinking gold's ≈0 beta towards 1 would erase
+        exactly the hedge it provides. Assets without enough history, or a
+        portfolio without market data, are left out (callers use defaults).
         """
         if self._betas is not None:
             return self._betas
@@ -711,13 +734,15 @@ class Portfolio:
                 lr = np.log(hist / hist.shift(1)).replace([np.inf, -np.inf], np.nan)
             m = lr[market_ticker]
             for a in self.assets:
-                if a.asset_class not in EQUITY_ASSET_CLASSES or a.ticker not in lr.columns:
+                equity = a.asset_class in EQUITY_ASSET_CLASSES
+                if not (equity or a.asset_class in BETA_ALT_CLASSES) or a.ticker not in lr.columns:
                     continue
                 pair = pd.concat([lr[a.ticker], m], axis=1).dropna()
                 if len(pair) < 60 or pair.iloc[:, 1].var() == 0:
                     continue
-                raw = pair.cov().iloc[0, 1] / pair.iloc[:, 1].var()
-                betas[a.ticker] = float(BLUME_WEIGHT * raw + (1 - BLUME_WEIGHT))
+                raw = float(pair.cov().iloc[0, 1] / pair.iloc[:, 1].var())
+                betas[a.ticker] = (BLUME_WEIGHT * raw + (1 - BLUME_WEIGHT) if equity
+                                   else float(np.clip(raw, -0.5, 2.0)))
         self._betas = betas
         return betas
 

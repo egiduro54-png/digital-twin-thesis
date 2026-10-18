@@ -194,6 +194,47 @@ STANDARD_SCENARIOS: dict[str, dict] = {
 }
 
 
+def _attach_historical_replays(scenarios: dict) -> None:
+    """
+    Turn the historical stress scenarios into replays of what actually
+    happened (data/historical_crises.json, built by scripts/build_crisis_returns).
+    Tickers with a recorded crisis return get exactly that return; others fall
+    back to the factor model with the crisis's actual market move, rate change
+    and volatility ratio. If the file is missing the factor parameters stay.
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "data" / "historical_crises.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("Historical crisis data unavailable (%s); using factor scenarios.", exc)
+        return
+    for sid, crisis in data.items():
+        if sid.startswith("_") or sid not in scenarios:
+            continue
+        sc = scenarios[sid]
+        sc.update({
+            "market_change": crisis["market_change"],
+            "rate_change": crisis["rate_change"],
+            "volatility_multiplier": crisis["volatility_multiplier"],
+            # Sector shocks were a guess at what the replay now records directly
+            "sector_overrides": {},
+            "replay_returns": crisis["returns"],
+            "replay_start": crisis["start"],
+            "replay_end": crisis["end"],
+        })
+        sc["description"] = (
+            f"Ιστορική αναπαραγωγή {crisis['start']} → {crisis['end']}: πραγματική απόδοση "
+            f"κάθε τίτλου (S&P 500 {crisis['market_change']:+.0%}, 10ετές "
+            f"{crisis['rate_change']*100:+.2f} μ., μεταβλητότητα ×{crisis['volatility_multiplier']})."
+        )
+
+
+_attach_historical_replays(STANDARD_SCENARIOS)
+
+
 class ScenarioEngine:
     """
     Simulates market scenarios on the portfolio Digital Twin.
