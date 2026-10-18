@@ -63,6 +63,12 @@ def _make_model(kind: str, seed: int):
     if kind == "ridge":
         from sklearn.linear_model import Ridge
         return Ridge(alpha=10.0)
+    if kind == "ridge_pos":
+        # Non-negative coefficients: every feature can only add risk. Near-
+        # duplicate features (stress loss vs RI stress) otherwise get opposite
+        # signs, which makes a per-portfolio explanation read backwards.
+        from sklearn.linear_model import Ridge
+        return Ridge(alpha=10.0, positive=True)
     if kind == "gbm":
         from sklearn.ensemble import HistGradientBoostingRegressor
         return HistGradientBoostingRegressor(max_depth=3, learning_rate=0.05,
@@ -149,7 +155,7 @@ def evaluate_learned(rows: pd.DataFrame, min_train: int = 3, n_boot: int = 1000,
     rows = rows.copy()
     learned = []
     for set_name, feats in FEATURE_SETS.items():
-        for kind in ("ridge", "gbm"):
+        for kind in ("ridge", "ridge_pos", "gbm"):
             col = f"learned_{kind}_{set_name}"
             rows[col] = walk_forward_scores(rows, feats, kind, min_train, seed)
             learned.append(col)
@@ -193,3 +199,72 @@ def evaluate_learned(rows: pd.DataFrame, min_train: int = 3, n_boot: int = 1000,
             rec[f"{m}_ci_vs_vol"] = f"[{lo:+.3f}, {hi:+.3f}]"
         recs.append(rec)
     return pd.DataFrame(recs), rows
+
+
+# ── Local explanation for one portfolio (app) ──────────────────────────────
+
+Z_CAP = 3.0
+
+def fit_explainer(rows: pd.DataFrame, features: list[str] | None = None) -> dict:
+    """
+    Ridge on all windows (standardised within each window), plus the most
+    recent window as the reference cross-section. JSON-serialisable, so the
+    app needs neither the rows nor scikit-learn at runtime.
+    """
+    features = features or DT_FEATURES
+    df = rows.dropna(subset=features + ["actual_drawdown"]).copy()
+    X = _zscore_within(df, features)
+    df["_y"] = -df["actual_drawdown"]
+    y = _zscore_within(df, ["_y"])["_y"]
+    model = _make_model("ridge_pos", 0).fit(X.values, y.values)
+
+    last = df[df["window"] == df["window"].max()]
+    mean, std = last[features].mean(), last[features].std().replace(0, np.nan)
+    ref_scores = np.sort(((last[features] - mean) / std).fillna(0.0).values @ model.coef_)
+    return {
+        "features": features,
+        "labels": [FEATURE_LABELS.get(f, f) for f in features],
+        "coef": [float(c) for c in model.coef_],
+        "ref_mean": [float(x) for x in mean],
+        "ref_std": [float(x) if np.isfinite(x) else 1.0 for x in std],
+        "ref_scores": [float(x) for x in ref_scores],
+        "ref_window": int(df["window"].max()),
+        "model": "ridge_pos",
+        "n_train": int(len(df)),
+    }
+
+
+def portfolio_features(portfolio) -> dict[str, float]:
+    """The DT features of one portfolio, defined exactly as in the validation rows."""
+    from .resilience import compute_resilience
+    from .validation import ProposedRiskScorer
+
+    p = ProposedRiskScorer().score(portfolio)
+    feats = {"alerts_only": p["alert_norm"], "scenarios_only": p["scenario_norm"],
+             "drift_only": p["drift_norm"]}
+    for k, v in compute_resilience(portfolio)["components"].items():
+        feats[f"ri_{k}"] = 1.0 - v
+    return feats
+
+
+def explain_portfolio(features: dict[str, float], explainer: dict) -> dict:
+    """
+    Exact additive explanation of the linear model: each feature contributes
+    coef · (x − mean) / std relative to the typical portfolio of the reference
+    window (for a linear model this equals its SHAP value). Positive = riskier.
+    """
+    rows = []
+    for f, label, c, m, s in zip(explainer["features"], explainer["labels"], explainer["coef"],
+                                  explainer["ref_mean"], explainer["ref_std"]):
+        x = features.get(f, m)
+        z_raw = (x - m) / s if s else 0.0
+        # Beyond ±3 std the portfolio is outside the reference population;
+        # cap so one extrapolated feature does not dominate the explanation
+        z = float(np.clip(z_raw, -Z_CAP, Z_CAP))
+        rows.append({"feature": f, "label": label, "value": x, "z": z,
+                     "outside_reference": abs(z_raw) > Z_CAP, "contribution": c * z})
+    contrib = pd.DataFrame(rows).sort_values("contribution", key=np.abs, ascending=False)
+    score = float(contrib["contribution"].sum())
+    ref = np.asarray(explainer["ref_scores"])
+    percentile = float((ref <= score).mean() * 100) if len(ref) else float("nan")
+    return {"score": score, "percentile": percentile, "contributions": contrib.reset_index(drop=True)}

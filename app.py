@@ -1234,8 +1234,60 @@ def _render_multi_scenario_table(multi: dict):
 # Tab 3: Παρακολούθηση Κινδύνου
 # ---------------------------------------------------------------------------
 
+def _render_learned_explanation(portfolio):
+    """Per-portfolio explanation of the learned risk model (XAI)."""
+    import json
+    from src.learned_scorer import portfolio_features, explain_portfolio
+
+    try:
+        ex = json.loads((VALIDATION_DIR / "learned_explainer.json").read_text(encoding="utf-8"))
+    except Exception:
+        return  # no trained model shipped
+    try:
+        r = explain_portfolio(portfolio_features(portfolio), ex)
+    except Exception as exc:
+        st.caption(f"Η εξήγηση του μοντέλου δεν υπολογίστηκε: {exc}")
+        return
+
+    st.subheader("Γιατί αυτό το επίπεδο κινδύνου; (εξήγηση μοντέλου)")
+    st.caption(
+        f"Γραμμικό μοντέλο με μη αρνητικά βάρη, εκπαιδευμένο σε {ex['n_train']:,} χαρτοφυλάκια "
+        "της αξιολόγησης να κατατάσσει τον κίνδυνο του επόμενου έτους από τις συνιστώσες του "
+        "ψηφιακού διδύμου. Σύγκριση με τα 150 χαρτοφυλάκια του πιο πρόσφατου παραθύρου."
+    )
+    pct = r["percentile"]
+    level = ("χαμηλότερο" if pct < 33 else "μέσο" if pct < 67 else "υψηλότερο")
+    c1, c2 = st.columns([1, 2])
+    c1.metric("Εκατοστημόριο κινδύνου", f"{pct:.0f}ο",
+              help="Ποσοστό των χαρτοφυλακίων αναφοράς με χαμηλότερο εκτιμώμενο κίνδυνο.")
+    c2.info(f"Το χαρτοφυλάκιο έχει **{level}** εκτιμώμενο κίνδυνο από τα χαρτοφυλάκια "
+            f"αναφοράς: πιο επικίνδυνο από το {pct:.0f}% αυτών.")
+
+    contrib = r["contributions"]
+    contrib = contrib[contrib["contribution"].abs() > 1e-6]
+    if contrib.empty:
+        return
+    st.bar_chart(contrib.set_index("label")["contribution"].sort_values(), horizontal=True)
+    st.caption(
+        "Συνεισφορά κάθε παράγοντα σε σχέση με ένα τυπικό χαρτοφυλάκιο: θετική = αυξάνει τον "
+        "κίνδυνο, αρνητική = τον μειώνει. Επειδή το μοντέλο είναι γραμμικό, οι συνεισφορές "
+        "αθροίζουν ακριβώς στο συνολικό σκορ (ισοδυναμούν με τιμές SHAP)."
+    )
+    top = contrib.iloc[0]
+    direction = "αυξάνει" if top["contribution"] > 0 else "μειώνει"
+    st.markdown(f"Ο παράγοντας με τη μεγαλύτερη επίδραση είναι **{top['label']}**, που "
+                f"{direction} τον εκτιμώμενο κίνδυνο.")
+    outside = contrib[contrib["outside_reference"]]
+    if not outside.empty:
+        st.caption("Εκτός του εύρους των χαρτοφυλακίων αναφοράς (η επίδραση έχει περιοριστεί "
+                   "στις ±3 τυπικές αποκλίσεις): " + ", ".join(outside["label"]) + ".")
+    st.markdown("---")
+
+
 def render_risk(analysis: dict):
     st.header("Παρακολούθηση Κινδύνου (Risk Monitoring)")
+    if st.session_state.get("portfolio") is not None:
+        _render_learned_explanation(st.session_state["portfolio"])
 
     summary = analysis["summary"]
     highest = analysis["highest_severity"]
@@ -3031,6 +3083,8 @@ _SCORER_LABELS = {
     "learned_gbm_dt": "Μαθημένο GBM — συνιστώσες DT",
     "learned_ridge_dt+static": "Μαθημένο Ridge — DT + στατικές",
     "learned_gbm_dt+static": "Μαθημένο GBM — DT + στατικές",
+    "learned_ridge_pos_dt": "Μαθημένο Ridge (μη αρνητικά βάρη) — συνιστώσες DT",
+    "learned_ridge_pos_dt+static": "Μαθημένο Ridge (μη αρνητικά βάρη) — DT + στατικές",
 }
 _RQ3_LABELS = {
     "hold": "Καμία ενέργεια",

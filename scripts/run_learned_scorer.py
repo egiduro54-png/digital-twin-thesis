@@ -7,6 +7,7 @@ Outputs next to the rows file:
     learned_summary.csv      learned vs fixed-weight scorers, out-of-sample windows
     learned_importance.csv   permutation importance per feature set (Ridge)
     learned_coefficients.csv Ridge coefficients (standardised), for reading
+    learned_explainer.json   Ridge on the DT features + reference window, for the app
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.learned_scorer import (
-    FEATURE_SETS, evaluate_learned, permutation_importance, ridge_coefficients,
+    FEATURE_SETS, evaluate_learned, fit_explainer, permutation_importance, ridge_coefficients,
 )
 
 
@@ -55,6 +56,10 @@ def main():
     print(imp.to_string(index=False))
     print("\nRidge coefficients (all windows, standardised):")
     print(coef.to_string(index=False))
+
+    import json
+    (out / "learned_explainer.json").write_text(json.dumps(fit_explainer(rows), indent=1),
+                                                encoding="utf-8")
     print(f"\nDone in {(time.time() - t0) / 60:.1f} min. Results in {out}/")
 
 

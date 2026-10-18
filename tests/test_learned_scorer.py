@@ -58,3 +58,32 @@ def test_permutation_importance_ranks_signal_first():
     imp = permutation_importance(rows, FEATURES, "ridge", min_train=3, n_repeats=2)
     assert imp.iloc[0]["feature"] == "ri_downside"
     assert imp.iloc[0]["importance"] > 0.3
+
+
+class TestExplainer:
+    def test_coefficients_non_negative_and_signal_largest(self):
+        from src.learned_scorer import fit_explainer
+        ex = fit_explainer(_rows())
+        coef = dict(zip(ex["features"], ex["coef"]))
+        assert min(coef.values()) >= 0
+        assert max(coef, key=coef.get) == "ri_downside"
+
+    def test_contributions_sum_to_score_and_order_by_risk(self):
+        from src.learned_scorer import fit_explainer, explain_portfolio
+        ex = fit_explainer(_rows())
+        base = dict(zip(ex["features"], ex["ref_mean"]))
+        std = dict(zip(ex["features"], ex["ref_std"]))
+        low = explain_portfolio({**base, "ri_downside": base["ri_downside"] - std["ri_downside"]}, ex)
+        high = explain_portfolio({**base, "ri_downside": base["ri_downside"] + std["ri_downside"]}, ex)
+        assert high["contributions"]["contribution"].sum() == pytest.approx(high["score"])
+        assert low["percentile"] < high["percentile"]
+
+    def test_extrapolation_is_capped_and_flagged(self):
+        from src.learned_scorer import fit_explainer, explain_portfolio, Z_CAP
+        ex = fit_explainer(_rows())
+        base = dict(zip(ex["features"], ex["ref_mean"]))
+        std = dict(zip(ex["features"], ex["ref_std"]))
+        r = explain_portfolio({**base, "ri_downside": base["ri_downside"] + 10 * std["ri_downside"]}, ex)
+        row = r["contributions"].set_index("feature").loc["ri_downside"]
+        assert row["z"] == pytest.approx(Z_CAP)
+        assert bool(row["outside_reference"])
