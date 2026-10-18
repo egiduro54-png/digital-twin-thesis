@@ -2992,6 +2992,7 @@ def _plot_risk_rank_comparison(results: ValidationResults):
 
 
 VALIDATION_DIR = Path(__file__).resolve().parent / "results" / "validation"
+HOLDOUT_DIR = Path(__file__).resolve().parent / "results" / "validation_holdout"
 
 _SCORER_LABELS = {
     "baseline": "Baseline (στατικές μετρικές, σταθερά βάρη)",
@@ -3022,11 +3023,12 @@ _RQ3_LABELS = {
     "profile_only": "Μόνο εναρμόνιση προφίλ",
     "dt": "Όλες οι προτάσεις DT",
     "markowitz": "Βελτιστοποίηση Markowitz",
+    "hold_bond_mix": "Τρέχον + ομόλογα (ίδιος κίνδυνος με DT)",
 }
 
 
-def _read_validation_csv(name: str) -> pd.DataFrame | None:
-    path = VALIDATION_DIR / name
+def _read_validation_csv(name: str, base: Path | None = None) -> pd.DataFrame | None:
+    path = (base or VALIDATION_DIR) / name
     try:
         return pd.read_csv(path) if path.exists() else None
     except Exception:
@@ -3054,6 +3056,49 @@ def _read_original_bootstrap() -> dict | None:
         return None
 
 
+def _render_ranking_table(summary: pd.DataFrame):
+    """Scorers vs the static baseline and vs historical volatility alone."""
+    main = ["baseline", "resilience", "proposed", "alerts_scenarios",
+            "hist_vol", "hist_cvar95"]
+    has_vol = "spearman_ci_vs_vol" in summary.columns
+    has_uw = "spearman_underwater" in summary.columns
+    rows = []
+    for s in main + [s for s in summary["scorer"] if s not in main]:
+        r = summary[summary["scorer"] == s]
+        if r.empty:
+            continue
+        r = r.iloc[0]
+        rec = {
+            "Σύστημα": _SCORER_LABELS.get(s, s),
+            "Spearman ρ": round(r["spearman"], 3),
+            "Δ vs Baseline (95% CI)": "—" if s == "baseline"
+                else f"{r['spearman_diff']:+.3f} {r['spearman_ci']}",
+            "Αποτέλεσμα vs Baseline": "" if s == "baseline" else _significance(r["spearman_ci"]),
+        }
+        if has_vol:
+            vol_ci = r.get("spearman_ci_vs_vol")
+            rec["Δ vs μεταβλητότητα (95% CI)"] = ("—" if s == "hist_vol" or pd.isna(vol_ci)
+                                                  else f"{r['spearman_diff_vs_vol']:+.3f} {vol_ci}")
+            rec["Αποτέλεσμα vs μεταβλητότητα"] = ("" if s == "hist_vol" or pd.isna(vol_ci)
+                                                  else _significance(vol_ci))
+        rec["AUROC (DD<−15%)"] = round(r["auroc_fixed"], 3)
+        rec["Δ AUROC vs Baseline (95% CI)"] = ("" if s == "baseline"
+                                               else f"{r['auroc_fixed_diff']:+.3f} {r['auroc_fixed_ci']}")
+        if has_uw:
+            rec["ρ με χρόνο κάτω από κορυφή"] = round(r["spearman_underwater"], 3)
+        rows.append(rec)
+    df = pd.DataFrame(rows)
+    st.dataframe(df.head(len(main)), hide_index=True)
+    with st.expander("Ablation: κάθε συνιστώσα ξεχωριστά"):
+        st.dataframe(df.iloc[len(main):], hide_index=True)
+    st.caption(
+        "Spearman ρ: συμφωνία της κατάταξης κινδύνου με την πραγματική απώλεια του επόμενου "
+        "έτους (μέσος όρος παραθύρων). AUROC: διάκριση των χαρτοφυλακίων με drawdown < −15%. "
+        "«Χρόνος κάτω από κορυφή»: δεύτερο ground truth για την ανάκαμψη, το ποσοστό των "
+        "ημερών του επόμενου έτους με απώλεια > 5% από την κορυφή."
+    )
+
+
 def render_robust_validation():
     """Pre-computed rolling-window evaluation (scripts/run_robust_validation.py)."""
     summary = _read_validation_csv("summary.csv")
@@ -3078,37 +3123,12 @@ def render_robust_validation():
         "από paired cluster bootstrap (1.000 επαναδειγματοληψίες)."
     )
 
-    rt1, rt2, rt3 = st.tabs(["Κατάταξη κινδύνου", "ΕΕ3: Βελτιώνουν οι προτάσεις;",
-                             "Scorer που μαθαίνει (AI/XAI)"])
+    rt1, rt2, rt3, rt4 = st.tabs(["Κατάταξη κινδύνου", "ΕΕ3: Βελτιώνουν οι προτάσεις;",
+                                  "Scorer που μαθαίνει (AI/XAI)",
+                                  "Έλεγχος σε νέους τίτλους (holdout)"])
 
     with rt1:
-        main = ["baseline", "resilience", "proposed", "alerts_scenarios",
-                "hist_vol", "hist_cvar95"]
-        rows = []
-        for s in main + [s for s in summary["scorer"] if s not in main]:
-            r = summary[summary["scorer"] == s]
-            if r.empty:
-                continue
-            r = r.iloc[0]
-            rows.append({
-                "Σύστημα": _SCORER_LABELS.get(s, s),
-                "Spearman ρ": round(r["spearman"], 3),
-                "Δ vs Baseline": "—" if s == "baseline" else f"{r['spearman_diff']:+.3f}",
-                "95% CI": "" if s == "baseline" else r["spearman_ci"],
-                "Αποτέλεσμα": "" if s == "baseline" else _significance(r["spearman_ci"]),
-                "Παράθυρα καλύτερα": "" if s == "baseline" else r["spearman_win_rate"],
-                "AUROC (DD<−15%)": round(r["auroc_fixed"], 3),
-                "Δ AUROC (95% CI)": "" if s == "baseline" else
-                    f"{r['auroc_fixed_diff']:+.3f} {r['auroc_fixed_ci']}",
-            })
-        df = pd.DataFrame(rows)
-        st.dataframe(df.head(len(main)), hide_index=True)
-        with st.expander("Ablation: κάθε συνιστώσα ξεχωριστά"):
-            st.dataframe(df.iloc[len(main):], hide_index=True)
-        st.caption(
-            "Spearman ρ: συμφωνία της κατάταξης κινδύνου με την πραγματική απώλεια (μέσος όρος "
-            "παραθύρων). AUROC: διάκριση των χαρτοφυλακίων με drawdown < −15%."
-        )
+        _render_ranking_table(summary)
 
     with rt2:
         rq3 = _read_validation_csv("rq3_rebalancing.csv")
@@ -3116,8 +3136,11 @@ def render_robust_validation():
             st.info("Δεν βρέθηκαν αποτελέσματα ΕΕ3.")
         else:
             st.markdown(
-                "Στο τέλος κάθε παραθύρου ανάλυσης εφαρμόζεται μία από τέσσερις ενέργειες και "
-                "το χαρτοφυλάκιο διακρατείται για το επόμενο έτος."
+                "Στο τέλος κάθε παραθύρου ανάλυσης εφαρμόζεται μία από πέντε ενέργειες και "
+                "το χαρτοφυλάκιο διακρατείται για το επόμενο έτος. Η ενέργεια «τρέχον + ομόλογα» "
+                "παίρνει **τον ίδιο εκτιμώμενο κίνδυνο** με το σχέδιο του DT απλώς αναμειγνύοντας "
+                "ομόλογα: αν το DT δεν τη νικά, η αξία του είναι μόνο «λιγότερες μετοχές» και όχι "
+                "οι συγκεκριμένες επιλογές του."
             )
             levels = rq3[rq3["comparison"].isin(_RQ3_LABELS)]
             st.dataframe(pd.DataFrame([{
@@ -3170,6 +3193,44 @@ def render_robust_validation():
                 st.bar_chart(sub.set_index("label")["importance"], horizontal=True)
                 st.caption("Πτώση του μέσου Spearman ρ όταν το χαρακτηριστικό ανακατεύεται "
                            "μέσα σε κάθε παράθυρο: όσο μεγαλύτερη, τόσο πιο χρήσιμο.")
+
+    with rt4:
+        _render_holdout_tab()
+
+
+def _render_holdout_tab():
+    summary = _read_validation_csv("summary.csv", HOLDOUT_DIR)
+    if summary is None:
+        st.info("Δεν βρέθηκαν αποτελέσματα holdout "
+                "(`python -m scripts.run_robust_validation --universe holdout`).")
+        return
+    st.markdown(
+        "Το ίδιο πείραμα σε **35 τίτλους που δεν χρησιμοποιήθηκαν ποτέ** κατά τον σχεδιασμό "
+        "του συστήματος (π.χ. CSCO, KO, MRK, CAT, NEE, IEF, LQD, VNQ, SLV). Τα βάρη του "
+        "Resilience Index ορίστηκαν αφού είχε φανεί ότι το CVaR τα πάει καλά στο κύριο "
+        "σύνολο τίτλων· εδώ ελέγχεται αν το αποτέλεσμα γενικεύεται."
+    )
+    _render_ranking_table(summary)
+    learned = _read_validation_csv("learned_summary.csv", HOLDOUT_DIR)
+    if learned is not None:
+        st.markdown("**Scorers που μαθαίνουν (walk-forward) στους νέους τίτλους**")
+        st.dataframe(pd.DataFrame([{
+            "Σύστημα": _SCORER_LABELS.get(r["scorer"], r["scorer"]),
+            "Spearman ρ": round(r["spearman"], 3),
+            "Δ vs Baseline (95% CI)": "—" if r["scorer"] == "baseline"
+                else f"{r['spearman_diff']:+.3f} {r['spearman_ci']}",
+            "Αποτέλεσμα": "" if r["scorer"] == "baseline" else _significance(r["spearman_ci"]),
+        } for _, r in learned.iterrows()]), hide_index=True)
+    rq3 = _read_validation_csv("rq3_rebalancing.csv", HOLDOUT_DIR)
+    if rq3 is not None:
+        d = rq3[rq3["comparison"] == "dt − hold_bond_mix"]
+        if not d.empty:
+            r = d.iloc[0]
+            st.caption(
+                f"ΕΕ3 στους νέους τίτλους, DT − (τρέχον + ομόλογα, ίδιος κίνδυνος): "
+                f"max drawdown {r['maxdd']:+.2f} μ. {r['maxdd_ci']}, "
+                f"Sharpe {r['sharpe']:+.3f} {r['sharpe_ci']}."
+            )
 
 
 def render_validation():
