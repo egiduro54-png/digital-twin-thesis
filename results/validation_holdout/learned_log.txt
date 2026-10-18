@@ -1,0 +1,65 @@
+                     scorer  windows  spearman  spearman_diff      spearman_ci spearman_wins  spearman_diff_vs_vol spearman_ci_vs_vol  auroc_fixed  auroc_fixed_diff   auroc_fixed_ci auroc_fixed_wins  auroc_fixed_diff_vs_vol auroc_fixed_ci_vs_vol  auroc_tercile  auroc_tercile_diff auroc_tercile_ci auroc_tercile_wins  auroc_tercile_diff_vs_vol auroc_tercile_ci_vs_vol  spearman_underwater  spearman_underwater_diff spearman_underwater_ci spearman_underwater_wins  spearman_underwater_diff_vs_vol spearman_underwater_ci_vs_vol
+                   baseline        9     0.537          0.000 [+0.000, +0.000]           0/9                -0.070   [-0.094, -0.047]        0.753             0.000 [+0.000, +0.000]              0/9                   -0.035      [-0.051, -0.015]          0.771               0.000 [+0.000, +0.000]                0/9                     -0.021        [-0.035, -0.002]                0.426                     0.000       [+0.000, +0.000]                      0/9                           -0.050              [-0.073, -0.025]
+                   proposed        9     0.536         -0.001 [-0.032, +0.029]           4/9                -0.072   [-0.096, -0.045]        0.752            -0.001 [-0.024, +0.019]              4/9                   -0.036      [-0.053, -0.018]          0.759              -0.013 [-0.034, +0.007]                2/9                     -0.034        [-0.052, -0.016]                0.409                    -0.018       [-0.051, +0.013]                      3/9                           -0.067              [-0.095, -0.041]
+                 resilience        9     0.516         -0.021 [-0.047, +0.001]           3/9                -0.092   [-0.115, -0.070]        0.738            -0.015 [-0.032, +0.001]              3/9                   -0.049      [-0.067, -0.033]          0.755              -0.016 [-0.031, -0.001]                2/9                     -0.037        [-0.052, -0.019]                0.400                    -0.026       [-0.053, -0.003]                      3/9                           -0.076              [-0.103, -0.052]
+                   hist_vol        9     0.607          0.070 [+0.047, +0.094]           8/9                 0.000   [+0.000, +0.000]        0.788             0.035 [+0.015, +0.051]              7/9                    0.000      [+0.000, +0.000]          0.792               0.021 [+0.002, +0.035]                7/9                      0.000        [+0.000, +0.000]                0.476                     0.050       [+0.025, +0.073]                      6/9                            0.000              [+0.000, +0.000]
+           learned_ridge_dt        9     0.572          0.035 [+0.012, +0.058]           6/9                -0.035   [-0.050, -0.021]        0.769             0.016 [-0.002, +0.032]              6/9                   -0.018      [-0.031, -0.007]          0.773               0.001 [-0.015, +0.016]                2/9                     -0.020        [-0.028, -0.009]                0.460                     0.034       [+0.008, +0.057]                      4/9                           -0.016              [-0.033, +0.000]
+       learned_ridge_pos_dt        9     0.581          0.044 [+0.021, +0.066]           7/9                -0.027   [-0.040, -0.013]        0.773             0.020 [+0.002, +0.036]              6/9                   -0.015      [-0.027, -0.004]          0.778               0.007 [-0.010, +0.021]                4/9                     -0.014        [-0.023, -0.004]                0.468                     0.042       [+0.015, +0.065]                      5/9                           -0.008              [-0.024, +0.007]
+             learned_gbm_dt        9     0.554          0.017 [-0.013, +0.050]           5/9                -0.053   [-0.076, -0.029]        0.770             0.017 [-0.010, +0.043]              4/9                   -0.018      [-0.038, +0.003]          0.760              -0.011 [-0.030, +0.011]                2/9                     -0.032        [-0.044, -0.013]                0.440                     0.014       [-0.019, +0.046]                      4/9                           -0.036              [-0.060, -0.012]
+    learned_ridge_dt+static        9     0.577          0.040 [+0.018, +0.063]           7/9                -0.031   [-0.045, -0.016]        0.774             0.021 [+0.004, +0.036]              6/9                   -0.014      [-0.024, -0.002]          0.774               0.003 [-0.012, +0.017]                4/9                     -0.018        [-0.026, -0.007]                0.453                     0.027       [+0.003, +0.048]                      5/9                           -0.023              [-0.037, -0.008]
+learned_ridge_pos_dt+static        9     0.583          0.046 [+0.027, +0.066]           7/9                -0.024   [-0.037, -0.012]        0.775             0.022 [+0.006, +0.036]              7/9                   -0.013      [-0.021, -0.003]          0.782               0.011 [-0.003, +0.024]                6/9                     -0.010        [-0.018, -0.001]                0.462                     0.035       [+0.014, +0.055]                      6/9                           -0.014              [-0.026, -0.002]
+      learned_gbm_dt+static        9     0.560          0.023 [-0.007, +0.053]           5/9                -0.047   [-0.070, -0.025]        0.772             0.019 [-0.007, +0.043]              5/9                   -0.016      [-0.036, +0.004]          0.765              -0.006 [-0.025, +0.014]                2/9                     -0.027        [-0.039, -0.010]                0.437                     0.010       [-0.019, +0.039]                      4/9                           -0.039              [-0.062, -0.017]
+
+Permutation importance (drop in mean Spearman ρ):
+feature_set            feature                   label  importance      std
+         dt        ri_downside                RI: CVaR    0.049053 0.000611
+         dt         drift_only         Απόκλιση προφίλ    0.001014 0.000637
+         dt ri_diversification       RI: διαφοροποίηση   -0.000931 0.001162
+         dt        alerts_only      Alerts RiskMonitor   -0.001686 0.001198
+         dt   ri_concentration         RI: συγκέντρωση   -0.001935 0.000552
+         dt      ri_sequential    RI: διαδοχικά shocks   -0.002756 0.000890
+         dt     scenarios_only Απώλεια stress σεναρίων   -0.003836 0.000960
+         dt        ri_recovery            RI: ανάκαμψη   -0.004327 0.001362
+         dt          ri_stress              RI: stress   -0.006009 0.000243
+  dt+static           hist_vol  Ιστορική μεταβλητότητα    0.006076 0.000316
+  dt+static        ri_recovery            RI: ανάκαμψη    0.004011 0.000769
+  dt+static         drift_only         Απόκλιση προφίλ    0.000544 0.000568
+  dt+static        hist_cvar95       Ιστορικό CVaR 95%    0.000290 0.000355
+  dt+static ri_diversification       RI: διαφοροποίηση    0.000283 0.000826
+  dt+static         hist_maxdd   Ιστορικό max drawdown    0.000064 0.001168
+  dt+static       equity_share         Ποσοστό μετοχών   -0.000908 0.000987
+  dt+static   ri_concentration         RI: συγκέντρωση   -0.001473 0.000864
+  dt+static        alerts_only      Alerts RiskMonitor   -0.002095 0.000623
+  dt+static     scenarios_only Απώλεια stress σεναρίων   -0.002500 0.000835
+  dt+static                hhi                     HHI   -0.002679 0.001946
+  dt+static      ri_sequential    RI: διαδοχικά shocks   -0.003101 0.000475
+  dt+static        ri_downside                RI: CVaR   -0.003940 0.000928
+  dt+static          ri_stress              RI: stress   -0.004399 0.000249
+
+Ridge coefficients (all windows, standardised):
+feature_set            feature                   label  coefficient
+         dt        ri_downside                RI: CVaR     0.585595
+         dt        alerts_only      Alerts RiskMonitor     0.090640
+         dt     scenarios_only Απώλεια stress σεναρίων    -0.059820
+         dt          ri_stress              RI: stress     0.049401
+         dt        ri_recovery            RI: ανάκαμψη    -0.036524
+         dt      ri_sequential    RI: διαδοχικά shocks    -0.019542
+         dt         drift_only         Απόκλιση προφίλ     0.013094
+         dt ri_diversification       RI: διαφοροποίηση     0.011668
+         dt   ri_concentration         RI: συγκέντρωση     0.008042
+  dt+static           hist_vol  Ιστορική μεταβλητότητα     0.610305
+  dt+static        hist_cvar95       Ιστορικό CVaR 95%    -0.178559
+  dt+static        ri_downside                RI: CVaR     0.148393
+  dt+static         hist_maxdd   Ιστορικό max drawdown     0.107979
+  dt+static        ri_recovery            RI: ανάκαμψη    -0.100976
+  dt+static       equity_share         Ποσοστό μετοχών    -0.091352
+  dt+static                hhi                     HHI     0.057760
+  dt+static        alerts_only      Alerts RiskMonitor     0.038614
+  dt+static ri_diversification       RI: διαφοροποίηση    -0.038422
+  dt+static          ri_stress              RI: stress     0.037192
+  dt+static   ri_concentration         RI: συγκέντρωση     0.033867
+  dt+static         drift_only         Απόκλιση προφίλ     0.011080
+  dt+static     scenarios_only Απώλεια stress σεναρίων    -0.004863
+  dt+static      ri_sequential    RI: διαδοχικά shocks    -0.000981
+
+Done in 2.1 min. Results in results\robust_validation_holdout_clean/
