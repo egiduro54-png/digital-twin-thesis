@@ -1,0 +1,24 @@
+feature_set,feature,label,coefficient
+dt,ri_downside,RI: CVaR,0.2808324240322206
+dt,ri_stress,RI: stress,-0.2268445617199373
+dt,scenarios_only,Απώλεια stress σεναρίων,0.20696481659809052
+dt,ri_sequential,RI: διαδοχικά shocks,0.18099767288425017
+dt,alerts_only,Alerts RiskMonitor,0.12335696223131849
+dt,ri_concentration,RI: συγκέντρωση,0.12075190430084412
+dt,ri_diversification,RI: διαφοροποίηση,0.09708749913705872
+dt,drift_only,Απόκλιση προφίλ,-0.038316100815333216
+dt,ri_recovery,RI: ανάκαμψη,0.0381454353202886
+dt+static,ri_downside,RI: CVaR,0.22633837850228639
+dt+static,scenarios_only,Απώλεια stress σεναρίων,0.2256104722243094
+dt+static,ri_stress,RI: stress,-0.16713151131001638
+dt+static,ri_sequential,RI: διαδοχικά shocks,0.1485356812227284
+dt+static,hhi,HHI,0.1168783768728556
+dt+static,hist_cvar95,Ιστορικό CVaR 95%,0.11621538509648392
+dt+static,alerts_only,Alerts RiskMonitor,0.10357364122468032
+dt+static,ri_concentration,RI: συγκέντρωση,0.08643215060160112
+dt+static,hist_maxdd,Ιστορικό max drawdown,-0.07674739410998341
+dt+static,equity_share,Ποσοστό μετοχών,-0.0517236901362867
+dt+static,ri_recovery,RI: ανάκαμψη,0.04939081404199396
+dt+static,hist_vol,Ιστορική μεταβλητότητα,0.045907293609298974
+dt+static,drift_only,Απόκλιση προφίλ,-0.04374864989763198
+dt+static,ri_diversification,RI: διαφοροποίηση,0.021419797313624964

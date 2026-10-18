@@ -8,3 +8,7 @@ __pycache__/
 dist/
 build/
 .DS_Store
+
+# Intermediate validation runs (the reported results live in results/validation/)
+results/robust_validation*/
+data/uploaded_portfolio.csv

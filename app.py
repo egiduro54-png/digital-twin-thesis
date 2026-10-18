@@ -324,7 +324,6 @@ def _portfolio_health_messages(portfolio) -> list[tuple[str, str]]:
     vol = metrics.get("volatility_annual_pct") or 0
     tgt_vol = metrics.get("target_volatility_pct") or 12
     sharpe = metrics.get("sharpe_ratio") or 0
-    hhi = composition.get("concentration", {}).get("herfindahl_index", 0)
     n = len(portfolio.assets)
     div_ratio = metrics.get("diversification_ratio") or 1
     max_drift = alignment.get("max_drift", 0)
@@ -337,11 +336,20 @@ def _portfolio_health_messages(portfolio) -> list[tuple[str, str]]:
     else:
         msgs.append((f"Μεταβλητότητα ({vol:.1f}%) εντός στόχου ({tgt_vol:.1f}%). ✓", "success"))
 
-    # Concentration
-    if hhi > 0.25:
-        msgs.append((f"Υψηλή συγκέντρωση (Herfindahl={hhi:.2f}) — ένας ή λίγοι τίτλοι κυριαρχούν στο χαρτοφυλάκιο.", "error"))
-    elif hhi > 0.15:
-        msgs.append((f"Μέτρια συγκέντρωση (Herfindahl={hhi:.2f}) — αξίζει επανεξέταση.", "warning"))
+    # Concentration: same verdict as the Risk Monitor (broad ETFs have their
+    # own limit), so this tab and the risk tab never disagree
+    analysis = st.session_state.get("risk_analysis") or RiskMonitor(portfolio).run_full_analysis()
+    single = next((a for a in analysis.get("all", [])
+                   if a.get("title") == "Συγκέντρωση σε Μεμονωμένο Τίτλο"), None)
+    if single and single["severity"] != "ok":
+        d = single["detail"]
+        kind = "διαφοροποιημένο ETF" if d.get("is_fund") else "μεμονωμένος τίτλος"
+        text = (f"συγκέντρωση: {d['largest_ticker']} ({kind}) αποτελεί "
+                f"{d['largest_pct']:.1f}% του χαρτοφυλακίου (όριο {d['target_pct']:.0f}%).")
+        if single["severity"] == "alert":
+            msgs.append((f"Υψηλή {text}", "error"))
+        else:
+            msgs.append((f"Μέτρια {text}", "warning"))
 
     # Diversification
     if n < 5:
@@ -2884,9 +2892,193 @@ def _plot_risk_rank_comparison(results: ValidationResults):
     return fig
 
 
+VALIDATION_DIR = Path(__file__).resolve().parent / "results" / "validation"
+
+_SCORER_LABELS = {
+    "baseline": "Baseline (στατικές μετρικές, σταθερά βάρη)",
+    "proposed": "Digital Twin scorer (alerts + σενάρια + drift, σταθερά βάρη)",
+    "alerts_scenarios": "DT χωρίς drift (alerts + σενάρια)",
+    "resilience": "Resilience Index",
+    "hist_vol": "Ιστορική μεταβλητότητα (μόνη)",
+    "hist_cvar95": "Ιστορικό CVaR 95% (μόνο)",
+    "alerts_only": "Μόνο alerts",
+    "scenarios_only": "Μόνο σενάρια",
+    "drift_only": "Μόνο απόκλιση προφίλ",
+    "equity_share": "Ποσοστό μετοχών",
+    "hhi": "HHI",
+    "hist_maxdd": "Ιστορικό max drawdown",
+    "ri_stress": "RI: stress σενάρια",
+    "ri_sequential": "RI: διαδοχικά shocks",
+    "ri_downside": "RI: CVaR",
+    "ri_recovery": "RI: ανάκαμψη",
+    "ri_diversification": "RI: διαφοροποίηση",
+    "ri_concentration": "RI: συγκέντρωση",
+    "learned_ridge_dt": "Μαθημένο Ridge — συνιστώσες DT",
+    "learned_gbm_dt": "Μαθημένο GBM — συνιστώσες DT",
+    "learned_ridge_dt+static": "Μαθημένο Ridge — DT + στατικές",
+    "learned_gbm_dt+static": "Μαθημένο GBM — DT + στατικές",
+}
+_RQ3_LABELS = {
+    "hold": "Καμία ενέργεια",
+    "profile_only": "Μόνο εναρμόνιση προφίλ",
+    "dt": "Όλες οι προτάσεις DT",
+    "markowitz": "Βελτιστοποίηση Markowitz",
+}
+
+
+def _read_validation_csv(name: str) -> pd.DataFrame | None:
+    path = VALIDATION_DIR / name
+    try:
+        return pd.read_csv(path) if path.exists() else None
+    except Exception:
+        return None
+
+
+def _significance(ci: str) -> str:
+    """'[lo, hi]' → whether the 95% CI of a difference excludes zero."""
+    try:
+        lo, hi = (float(x) for x in str(ci).strip("[]").split(","))
+    except ValueError:
+        return ""
+    if lo > 0:
+        return "σημαντικά καλύτερο"
+    if hi < 0:
+        return "σημαντικά χειρότερο"
+    return "μη σημαντική διαφορά"
+
+
+def _read_original_bootstrap() -> dict | None:
+    import json
+    try:
+        return json.loads((VALIDATION_DIR / "original_bootstrap.json").read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def render_robust_validation():
+    """Pre-computed rolling-window evaluation (scripts/run_robust_validation.py)."""
+    summary = _read_validation_csv("summary.csv")
+    if summary is None:
+        st.info("Δεν βρέθηκαν αποτελέσματα εκτεταμένης αξιολόγησης "
+                "(εκτελέστε `python -m scripts.run_robust_validation`).")
+        return
+    import json
+    try:
+        windows = json.loads((VALIDATION_DIR / "windows.json").read_text(encoding="utf-8"))
+    except Exception:
+        windows = []
+
+    st.markdown("### Εκτεταμένη αξιολόγηση: κυλιόμενα παράθυρα")
+    n_win = len(windows) or "12"
+    span = (f"{windows[0]['analysis_start']} → {windows[-1]['eval_end']}" if windows else "")
+    st.markdown(
+        f"**{n_win} κυλιόμενα παράθυρα** ({span}): 3 έτη ανάλυσης → 1 έτος αξιολόγησης, "
+        "με **150 τυχαία χαρτοφυλάκια** σε κάθε παράθυρο. Κάθε σύστημα βαθμολογεί μόνο με "
+        "δεδομένα του παραθύρου ανάλυσης· το ground truth είναι το πραγματικό max drawdown "
+        "του επόμενου έτους. Οι διαφορές από το Baseline έχουν 95% διάστημα εμπιστοσύνης "
+        "από paired cluster bootstrap (1.000 επαναδειγματοληψίες)."
+    )
+
+    rt1, rt2, rt3 = st.tabs(["Κατάταξη κινδύνου", "ΕΕ3: Βελτιώνουν οι προτάσεις;",
+                             "Scorer που μαθαίνει (AI/XAI)"])
+
+    with rt1:
+        main = ["baseline", "resilience", "proposed", "alerts_scenarios",
+                "hist_vol", "hist_cvar95"]
+        rows = []
+        for s in main + [s for s in summary["scorer"] if s not in main]:
+            r = summary[summary["scorer"] == s]
+            if r.empty:
+                continue
+            r = r.iloc[0]
+            rows.append({
+                "Σύστημα": _SCORER_LABELS.get(s, s),
+                "Spearman ρ": round(r["spearman"], 3),
+                "Δ vs Baseline": "—" if s == "baseline" else f"{r['spearman_diff']:+.3f}",
+                "95% CI": "" if s == "baseline" else r["spearman_ci"],
+                "Αποτέλεσμα": "" if s == "baseline" else _significance(r["spearman_ci"]),
+                "Παράθυρα καλύτερα": "" if s == "baseline" else r["spearman_win_rate"],
+                "AUROC (DD<−15%)": round(r["auroc_fixed"], 3),
+                "Δ AUROC (95% CI)": "" if s == "baseline" else
+                    f"{r['auroc_fixed_diff']:+.3f} {r['auroc_fixed_ci']}",
+            })
+        df = pd.DataFrame(rows)
+        st.dataframe(df.head(len(main)), hide_index=True)
+        with st.expander("Ablation: κάθε συνιστώσα ξεχωριστά"):
+            st.dataframe(df.iloc[len(main):], hide_index=True)
+        st.caption(
+            "Spearman ρ: συμφωνία της κατάταξης κινδύνου με την πραγματική απώλεια (μέσος όρος "
+            "παραθύρων). AUROC: διάκριση των χαρτοφυλακίων με drawdown < −15%."
+        )
+
+    with rt2:
+        rq3 = _read_validation_csv("rq3_rebalancing.csv")
+        if rq3 is None:
+            st.info("Δεν βρέθηκαν αποτελέσματα ΕΕ3.")
+        else:
+            st.markdown(
+                "Στο τέλος κάθε παραθύρου ανάλυσης εφαρμόζεται μία από τέσσερις ενέργειες και "
+                "το χαρτοφυλάκιο διακρατείται για το επόμενο έτος."
+            )
+            levels = rq3[rq3["comparison"].isin(_RQ3_LABELS)]
+            st.dataframe(pd.DataFrame([{
+                "Ενέργεια": _RQ3_LABELS[r["comparison"]],
+                "Max drawdown (%)": round(r["maxdd"], 1),
+                "Μεταβλητότητα (%)": round(r["vol"], 1),
+                "CVaR 95% ημερ. (%)": round(r["cvar"], 2),
+                "Ετήσια απόδοση (%)": round(r["ret"], 1),
+                "Sharpe": round(r["sharpe"], 2),
+            } for _, r in levels.iterrows()]), hide_index=True)
+
+            diffs = rq3[~rq3["comparison"].isin(_RQ3_LABELS)]
+            st.markdown("**Διαφορές (95% CI, παράθυρα όπου η διαφορά είναι θετική)**")
+            st.dataframe(pd.DataFrame([{
+                "Σύγκριση": " − ".join(_RQ3_LABELS.get(x.strip(), x.strip())
+                                       for x in r["comparison"].split("−")),
+                "Max drawdown (μ.)": f"{r['maxdd']:+.2f} {r['maxdd_ci']} ({r['maxdd_windows_up']})",
+                "Απόδοση (μ.)": f"{r['ret']:+.2f} {r['ret_ci']} ({r['ret_windows_up']})",
+                "Sharpe": f"{r['sharpe']:+.3f} {r['sharpe_ci']} ({r['sharpe_windows_up']})",
+            } for _, r in diffs.iterrows()]), hide_index=True)
+            st.caption(
+                "Θετική διαφορά στο max drawdown σημαίνει μικρότερη απώλεια (καλύτερο). "
+                "Αγορές και πωλήσεις χωρίς κόστη συναλλαγών."
+            )
+
+    with rt3:
+        learned = _read_validation_csv("learned_summary.csv")
+        imp = _read_validation_csv("learned_importance.csv")
+        if learned is None:
+            st.info("Δεν βρέθηκαν αποτελέσματα (εκτελέστε `python -m scripts.run_learned_scorer`).")
+        else:
+            n_test = int(learned["windows"].iloc[0])
+            st.markdown(
+                "Τα βάρη μαθαίνονται από τα δεδομένα αντί να ορίζονται a priori. Για κάθε "
+                "παράθυρο k, το μοντέλο εκπαιδεύεται **μόνο στα παράθυρα πριν από το k** "
+                f"(walk-forward) και αξιολογείται στο k ({n_test} παράθυρα εκτός δείγματος)."
+            )
+            st.dataframe(pd.DataFrame([{
+                "Σύστημα": _SCORER_LABELS.get(r["scorer"], r["scorer"]),
+                "Spearman ρ": round(r["spearman"], 3),
+                "Δ vs Baseline (95% CI)": "—" if r["scorer"] == "baseline"
+                    else f"{r['spearman_diff']:+.3f} {r['spearman_ci']}",
+                "Αποτέλεσμα": "" if r["scorer"] == "baseline" else _significance(r["spearman_ci"]),
+                "AUROC": round(r["auroc_fixed"], 3),
+            } for _, r in learned.iterrows()]), hide_index=True)
+            if imp is not None:
+                st.markdown("**Επεξηγησιμότητα: τι μετράει στην πρόβλεψη** "
+                            "(permutation importance, Ridge, DT + στατικές)")
+                sub = imp[imp["feature_set"] == "dt+static"].sort_values("importance")
+                st.bar_chart(sub.set_index("label")["importance"], horizontal=True)
+                st.caption("Πτώση του μέσου Spearman ρ όταν το χαρακτηριστικό ανακατεύεται "
+                           "μέσα σε κάθε παράθυρο: όσο μεγαλύτερη, τόσο πιο χρήσιμο.")
+
+
 def render_validation():
     """Tab 5: Πειραματική Αξιολόγηση — Σύγκριση Baseline vs Digital Twin."""
     st.subheader("🔬 Πειραματική Αξιολόγηση Συστήματος")
+    render_robust_validation()
+    st.markdown("---")
+    st.markdown("### Αρχικό πείραμα: 30 χαρτοφυλάκια, ένα παράθυρο (διαδραστικό)")
     st.markdown(
         """
         | Σύστημα | Περιγραφή |
@@ -3053,14 +3245,12 @@ def render_validation():
             def _fmt_pval(p):
                 if p is None:
                     return "—"
-                if p < 0.001:
-                    return "p < 0.001 ✅"
-                if p < 0.05:
-                    return f"p = {p:.3f} ✅"
-                return f"p = {p:.3f}"
-            sig_b = _fmt_pval(p_b)
-            sig_p = _fmt_pval(p_p)
-            st.caption(f"Baseline: {sig_b} | Proposed: {sig_p}")
+                return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
+            st.caption(
+                f"Έλεγχος ρ ≠ 0 — Baseline: {_fmt_pval(p_b)} | Proposed: {_fmt_pval(p_p)}. "
+                "Δείχνει μόνο ότι κάθε σύστημα σχετίζεται με τον κίνδυνο, όχι ότι το ένα "
+                "είναι καλύτερο από το άλλο· αυτό το δείχνει το διάστημα εμπιστοσύνης της διαφοράς."
+            )
 
             st.markdown("#### MAE Κατάταξης Κινδύνου (κανονικοποιημένο, 0–1)")
             _val_metric_card(
@@ -3098,16 +3288,18 @@ def render_validation():
                 return f"{sign}{v:.{decimals}f}{suffix}"
 
             st.markdown(
-                f"""
-                <div style="background:#e8f5e9;border-radius:8px;padding:10px;margin-top:8px">
-                  <strong>Βελτίωση Digital Twin vs Baseline</strong><br>
-                  AUROC: <strong>{_fmt_imp(imp_auroc)}</strong> &nbsp;|&nbsp;
-                  Spearman ρ: <strong>{_fmt_imp(imp_sp)}</strong> &nbsp;|&nbsp;
-                  MAE (norm): <strong>{_fmt_imp(imp_mae, '', 3)}</strong>
-                </div>
-                """,
-                unsafe_allow_html=True,
+                f"**Διαφορά Digital Twin − Baseline:** AUROC {_fmt_imp(imp_auroc)} | "
+                f"Spearman ρ {_fmt_imp(imp_sp)} | MAE (norm) {_fmt_imp(imp_mae, '', 3)}"
             )
+            boot = _read_original_bootstrap()
+            if boot:
+                st.caption(
+                    "Paired bootstrap 95% CI της διαφοράς (2.000 επαναδειγματοληψίες): "
+                    f"Spearman {boot['spearman']['diff']:+.3f} {boot['spearman']['ci95']}, "
+                    f"AUROC {boot['auroc_fixed']['diff']:+.3f} {boot['auroc_fixed']['ci95']}. "
+                    "Με 30 χαρτοφυλάκια σε ένα παράθυρο το διάστημα περιλαμβάνει το μηδέν: "
+                    "η διαφορά δεν είναι στατιστικά σημαντική. Δείτε την εκτεταμένη αξιολόγηση παραπάνω."
+                )
 
         # ── Visualizations ─────────────────────────────────────────────────
         st.markdown("---")

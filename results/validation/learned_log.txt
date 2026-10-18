@@ -1,0 +1,64 @@
+                 scorer  windows  spearman  spearman_diff      spearman_ci spearman_wins  auroc_fixed  auroc_fixed_diff   auroc_fixed_ci auroc_fixed_wins  auroc_tercile  auroc_tercile_diff auroc_tercile_ci auroc_tercile_wins
+               baseline        9     0.557          0.000 [+0.000, +0.000]           0/9        0.796             0.000 [+0.000, +0.000]              0/9          0.779               0.000 [+0.000, +0.000]                0/9
+               proposed        9     0.612          0.055 [+0.025, +0.084]           6/9        0.786            -0.009 [-0.040, +0.024]              3/9          0.791               0.012 [-0.006, +0.034]                5/9
+             resilience        9     0.622          0.065 [+0.043, +0.086]           6/9        0.823             0.027 [+0.009, +0.048]              5/9          0.800               0.021 [+0.006, +0.037]                5/9
+               hist_vol        9     0.615          0.058 [+0.031, +0.083]           7/9        0.820             0.024 [+0.003, +0.045]              5/9          0.796               0.017 [+0.002, +0.035]                5/9
+       learned_ridge_dt        9     0.626          0.069 [+0.046, +0.089]           7/9        0.824             0.028 [+0.011, +0.048]              6/9          0.808               0.028 [+0.015, +0.045]                6/9
+         learned_gbm_dt        9     0.593          0.036 [+0.007, +0.061]           6/9        0.797             0.001 [-0.021, +0.025]              5/9          0.793               0.014 [-0.003, +0.035]                5/9
+learned_ridge_dt+static        9     0.603          0.046 [+0.022, +0.067]           5/9        0.814             0.018 [-0.005, +0.042]              6/9          0.795               0.016 [+0.002, +0.033]                6/9
+  learned_gbm_dt+static        9     0.582          0.025 [-0.002, +0.051]           5/9        0.803             0.007 [-0.018, +0.031]              5/9          0.781               0.002 [-0.012, +0.023]                5/9
+
+Permutation importance (drop in mean Spearman ρ):
+feature_set            feature                   label  importance      std
+         dt        ri_downside                RI: CVaR    0.009363 0.000633
+         dt     scenarios_only Απώλεια stress σεναρίων    0.005988 0.001097
+         dt          ri_stress              RI: stress    0.004680 0.001171
+         dt        alerts_only      Alerts RiskMonitor    0.003118 0.000649
+         dt   ri_concentration         RI: συγκέντρωση    0.000262 0.000999
+         dt         drift_only         Απόκλιση προφίλ   -0.001260 0.000204
+         dt      ri_sequential    RI: διαδοχικά shocks   -0.003676 0.001672
+         dt        ri_recovery            RI: ανάκαμψη   -0.006355 0.000439
+         dt ri_diversification       RI: διαφοροποίηση   -0.010188 0.000556
+  dt+static     scenarios_only Απώλεια stress σεναρίων    0.008101 0.000597
+  dt+static        ri_downside                RI: CVaR    0.005906 0.000800
+  dt+static        alerts_only      Alerts RiskMonitor    0.004569 0.000646
+  dt+static         drift_only         Απόκλιση προφίλ    0.001974 0.000323
+  dt+static          ri_stress              RI: stress    0.001636 0.001539
+  dt+static           hist_vol  Ιστορική μεταβλητότητα    0.000533 0.001510
+  dt+static   ri_concentration         RI: συγκέντρωση    0.000429 0.001182
+  dt+static      ri_sequential    RI: διαδοχικά shocks   -0.000405 0.001528
+  dt+static                hhi                     HHI   -0.000602 0.002167
+  dt+static         hist_maxdd   Ιστορικό max drawdown   -0.001247 0.001000
+  dt+static ri_diversification       RI: διαφοροποίηση   -0.003142 0.000240
+  dt+static        ri_recovery            RI: ανάκαμψη   -0.003364 0.000526
+  dt+static       equity_share         Ποσοστό μετοχών   -0.003838 0.000574
+  dt+static        hist_cvar95       Ιστορικό CVaR 95%   -0.004432 0.000688
+
+Ridge coefficients (all windows, standardised):
+feature_set            feature                   label  coefficient
+         dt        ri_downside                RI: CVaR     0.280832
+         dt          ri_stress              RI: stress    -0.226845
+         dt     scenarios_only Απώλεια stress σεναρίων     0.206965
+         dt      ri_sequential    RI: διαδοχικά shocks     0.180998
+         dt        alerts_only      Alerts RiskMonitor     0.123357
+         dt   ri_concentration         RI: συγκέντρωση     0.120752
+         dt ri_diversification       RI: διαφοροποίηση     0.097087
+         dt         drift_only         Απόκλιση προφίλ    -0.038316
+         dt        ri_recovery            RI: ανάκαμψη     0.038145
+  dt+static        ri_downside                RI: CVaR     0.226338
+  dt+static     scenarios_only Απώλεια stress σεναρίων     0.225610
+  dt+static          ri_stress              RI: stress    -0.167132
+  dt+static      ri_sequential    RI: διαδοχικά shocks     0.148536
+  dt+static                hhi                     HHI     0.116878
+  dt+static        hist_cvar95       Ιστορικό CVaR 95%     0.116215
+  dt+static        alerts_only      Alerts RiskMonitor     0.103574
+  dt+static   ri_concentration         RI: συγκέντρωση     0.086432
+  dt+static         hist_maxdd   Ιστορικό max drawdown    -0.076747
+  dt+static       equity_share         Ποσοστό μετοχών    -0.051724
+  dt+static        ri_recovery            RI: ανάκαμψη     0.049391
+  dt+static           hist_vol  Ιστορική μεταβλητότητα     0.045907
+  dt+static         drift_only         Απόκλιση προφίλ    -0.043749
+  dt+static ri_diversification       RI: διαφοροποίηση     0.021420
+
+Done in 1.1 min. Results in results\robust_validation_final/
+exit=0

@@ -1,0 +1,98 @@
+[
+  {
+    "window": 0,
+    "analysis_start": "2011-09-22",
+    "analysis_end": "2014-09-24",
+    "eval_start": "2014-09-25",
+    "eval_end": "2015-09-24",
+    "universe_size": 21
+  },
+  {
+    "window": 1,
+    "analysis_start": "2012-09-21",
+    "analysis_end": "2015-09-24",
+    "eval_start": "2015-09-25",
+    "eval_end": "2016-09-23",
+    "universe_size": 23
+  },
+  {
+    "window": 2,
+    "analysis_start": "2013-09-25",
+    "analysis_end": "2016-09-23",
+    "eval_start": "2016-09-26",
+    "eval_end": "2017-09-25",
+    "universe_size": 23
+  },
+  {
+    "window": 3,
+    "analysis_start": "2014-09-25",
+    "analysis_end": "2017-09-25",
+    "eval_start": "2017-09-26",
+    "eval_end": "2018-09-25",
+    "universe_size": 23
+  },
+  {
+    "window": 4,
+    "analysis_start": "2015-09-25",
+    "analysis_end": "2018-09-25",
+    "eval_start": "2018-09-26",
+    "eval_end": "2019-09-26",
+    "universe_size": 23
+  },
+  {
+    "window": 5,
+    "analysis_start": "2016-09-26",
+    "analysis_end": "2019-09-26",
+    "eval_start": "2019-09-27",
+    "eval_end": "2020-09-25",
+    "universe_size": 23
+  },
+  {
+    "window": 6,
+    "analysis_start": "2017-09-26",
+    "analysis_end": "2020-09-25",
+    "eval_start": "2020-09-28",
+    "eval_end": "2021-09-27",
+    "universe_size": 23
+  },
+  {
+    "window": 7,
+    "analysis_start": "2018-09-26",
+    "analysis_end": "2021-09-27",
+    "eval_start": "2021-09-28",
+    "eval_end": "2022-09-27",
+    "universe_size": 23
+  },
+  {
+    "window": 8,
+    "analysis_start": "2019-09-27",
+    "analysis_end": "2022-09-27",
+    "eval_start": "2022-09-28",
+    "eval_end": "2023-09-28",
+    "universe_size": 23
+  },
+  {
+    "window": 9,
+    "analysis_start": "2020-09-28",
+    "analysis_end": "2023-09-28",
+    "eval_start": "2023-09-29",
+    "eval_end": "2024-09-30",
+    "universe_size": 23
+  },
+  {
+    "window": 10,
+    "analysis_start": "2021-09-28",
+    "analysis_end": "2024-09-30",
+    "eval_start": "2024-10-01",
+    "eval_end": "2025-10-02",
+    "universe_size": 23
+  },
+  {
+    "window": 11,
+    "analysis_start": "2022-09-28",
+    "analysis_end": "2025-10-02",
+    "eval_start": "2025-10-03",
+    "eval_end": "2026-10-05",
+    "universe_size": 23
+  }
+]
