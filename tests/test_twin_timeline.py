@@ -73,3 +73,11 @@ class TestSnapshot:
         _, holdings = compare_snapshots(old, new)
         bnd = holdings[holdings["Ticker"] == "BND"].iloc[0]
         assert bnd["Μεταβολή (μ.)"] > 0
+
+
+def test_forward_drawdown_is_hindsight_and_non_positive():
+    tl = timeline(_portfolio())
+    fd = tl["next_drawdown_pct"].dropna()
+    assert len(fd) > 0 and (fd <= 0).all()
+    # The last points are too close to the end of the data to have 6 months after
+    assert np.isnan(tl["next_drawdown_pct"].iloc[-1])

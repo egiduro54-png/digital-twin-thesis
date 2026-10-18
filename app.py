@@ -1845,8 +1845,22 @@ def _render_twin_timeline(portfolio):
         st.dataframe(fa.assign(
             date=fa["date"].dt.date,
             drawdown_pct=fa["drawdown_pct"].round(1),
+            next_drawdown_pct=fa["next_drawdown_pct"].round(1),
         ).rename(columns={"date": "Ημερομηνία", "alert": "Συναγερμός",
-                          "drawdown_pct": "Drawdown τότε (%)"}), hide_index=True)
+                          "drawdown_pct": "Drawdown τότε (%)",
+                          "next_drawdown_pct": "Drawdown που ακολούθησε, 6 μήνες (%)"}),
+            hide_index=True)
+        st.caption(
+            "«Drawdown που ακολούθησε»: η χειρότερη πτώση στους επόμενους ~6 μήνες από την "
+            "ημερομηνία του συναγερμού. Είναι πληροφορία εκ των υστέρων, μόνο για να κρίνετε "
+            "αν ο συναγερμός άξιζε· το δίδυμο δεν τη χρησιμοποιεί."
+        )
+        if tl["next_drawdown_pct"].notna().any():
+            with_alert = tl[tl["n_alert"] > 0]["next_drawdown_pct"].mean()
+            without = tl[tl["n_alert"] == 0]["next_drawdown_pct"].mean()
+            if np.isfinite(with_alert) and np.isfinite(without):
+                st.caption(f"Μέσο drawdown 6 μηνών μετά από μήνες με ενεργό alert: {with_alert:.1f}% · "
+                           f"χωρίς alert: {without:.1f}%.")
     worst = tl.loc[tl["drawdown_pct"].idxmin()]
     st.caption(
         f"Χειρότερο σημείο: {worst['date'].date()} με drawdown {worst['drawdown_pct']:.1f}% "

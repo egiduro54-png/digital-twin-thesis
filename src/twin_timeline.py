@@ -31,6 +31,7 @@ from .risk_monitor import RiskMonitor
 
 SNAPSHOT_VERSION = 1
 MIN_HISTORY_DAYS = 252  # one year before the first timeline point
+FORWARD_DAYS = 126      # "what followed" horizon: ~6 months
 
 
 def _portfolio_at(portfolio: Portfolio, date: pd.Timestamp, lookback_days: int) -> Portfolio | None:
@@ -79,6 +80,9 @@ def timeline(portfolio: Portfolio, lookback_days: int = 3 * 252,
             continue
         v = value.loc[:d]
         recs.append({
+            # Hindsight only, for judging the alerts; never used by the twin:
+            # worst fall from this date's value over the next ~6 months
+            "next_drawdown_pct": _forward_drawdown(value, v.index[-1]),
             "date": v.index[-1],
             "value": float(v.iloc[-1]),
             "drawdown_pct": float((v.iloc[-1] / peak.loc[:d].iloc[-1] - 1) * 100),
@@ -91,6 +95,13 @@ def timeline(portfolio: Portfolio, lookback_days: int = 3 * 252,
     return pd.DataFrame(recs)
 
 
+def _forward_drawdown(value: pd.Series, date: pd.Timestamp) -> float:
+    after = value.loc[date:].iloc[: FORWARD_DAYS + 1]
+    if len(after) < FORWARD_DAYS // 2:
+        return float("nan")  # too close to the end of the data
+    return float(min(after.min() / after.iloc[0] - 1, 0.0) * 100)
+
+
 def first_alerts(tl: pd.DataFrame) -> pd.DataFrame:
     """The first date each alert title appears in the timeline."""
     seen, out = set(), []
@@ -99,7 +110,8 @@ def first_alerts(tl: pd.DataFrame) -> pd.DataFrame:
             if title not in seen:
                 seen.add(title)
                 out.append({"date": r["date"], "alert": title,
-                            "drawdown_pct": r["drawdown_pct"]})
+                            "drawdown_pct": r["drawdown_pct"],
+                            "next_drawdown_pct": r.get("next_drawdown_pct", float("nan"))})
     return pd.DataFrame(out)
 
 
