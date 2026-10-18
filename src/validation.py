@@ -62,6 +62,9 @@ TICKER_META: dict[str, dict] = {
     "GLD":   {"name": "SPDR Gold Shares",             "sector": "Commodities ETF",        "asset_class": "Commodity",           "country": "Global"},
 }
 
+# ETFs the RecommendationEngine may buy that exist in this experiment's universe
+REBALANCE_CANDIDATES = ["BND", "AGG", "TLT", "GLD", "VEA"]
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 30 Portfolio Archetypes (5 groups × 6 = 30)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -306,12 +309,15 @@ def build_portfolio_from_prices(
     if not assets:
         raise ValueError(f"Could not build assets for archetype '{archetype['id']}'")
 
-    # Include SPY as market reference for beta even if not a portfolio holding
+    # Include SPY as market reference for beta even if not a portfolio holding,
+    # and the ETFs the recommendations may buy, so their trades and their effect
+    # on volatility can be evaluated (as the app does)
     port_cols = [a.ticker for a in assets]
-    market_refs = [t for t in ["SPY"] if t in prices_df.columns and t not in port_cols]
+    extra = [t for t in ["SPY"] + REBALANCE_CANDIDATES
+             if t in prices_df.columns and t not in port_cols]
     return Portfolio(
         assets=assets,
-        historical_prices=prices_df[port_cols + market_refs],
+        historical_prices=prices_df[port_cols + extra],
         risk_profile=archetype.get("risk_profile", "moderate"),
         name=archetype["label"],
     )
@@ -543,6 +549,10 @@ class ProposedRiskScorer:
             "worst_scenario_loss_pct": round(worst_loss, 2),
             "highest_severity":       analysis["highest_severity"],
             "scenario_losses":        scenario_losses,
+            # Normalized components (for ablation studies)
+            "alert_norm":             alert_norm,
+            "scenario_norm":          scenario_norm,
+            "drift_norm":             drift_norm,
         }
 
 

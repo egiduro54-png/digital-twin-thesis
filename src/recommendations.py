@@ -60,7 +60,7 @@ class RecommendationEngine:
 
     # Suggested replacements when reducing a position
     BOND_ETFS = ["BND", "AGG", "VCIT"]
-    INTL_ETFS = ["VXUS", "EFA", "IEMG"]
+    INTL_ETFS = ["VXUS", "EFA", "VEA", "IEMG"]
     BROAD_MARKET_ETFS = ["SPY", "VTI", "IVV"]
 
     def __init__(
