@@ -24,6 +24,20 @@ logger = logging.getLogger(__name__)
 TRADING_DAYS = 252
 RISK_FREE_RATE = 0.04  # 4% – approximate current US risk-free rate
 
+EQUITY_ASSET_CLASSES = ("Equity", "Equity ETF", "International Equity",
+                        "International ETF", "Emerging Markets ETF", "Cryptocurrency")
+
+# Blume (1971) adjustment: β_adj = 0.67·β + 0.33
+BLUME_WEIGHT = 0.67
+
+# Approximate effective/modified duration (years) of common bond ETFs, used
+# for the rate sensitivity of each fund in scenarios
+BOND_DURATIONS = {
+    "TLT": 16.5, "IEF": 7.5, "SHY": 1.9, "BND": 6.0, "AGG": 6.0,
+    "LQD": 8.4, "HYG": 3.5, "VCIT": 6.0, "VCSH": 2.6, "TIP": 6.7,
+}
+DEFAULT_BOND_DURATION = 6.0
+
 
 @dataclass
 class Asset:
@@ -147,6 +161,7 @@ class Portfolio:
         # Cached metric computations (lazy)
         self._metrics: Optional[dict] = None
         self._returns: Optional[pd.DataFrame] = None
+        self._betas: Optional[dict[str, float]] = None
 
     # ------------------------------------------------------------------
     # Basic Portfolio Properties
@@ -247,17 +262,14 @@ class Portfolio:
 
     def calculate_sharpe_ratio(self) -> float:
         """Sharpe ratio = (portfolio_return - risk_free_rate) / volatility."""
-        if self.is_scenario:
-            daily_ret = self.get_portfolio_daily_returns()
-            if daily_ret.empty:
-                return float("nan")
-            ret = float(daily_ret.mean() * TRADING_DAYS)
-        else:
-            ret = self.calculate_expected_annual_return()
+        # Same formula for live and scenario portfolios. The former scenario
+        # special case and ±5 cap compensated for price-level vol scaling,
+        # which apply_scenario no longer uses.
+        ret = self.calculate_expected_annual_return()
         vol = self.calculate_volatility()
         if np.isnan(ret) or np.isnan(vol) or vol == 0:
             return float("nan")
-        return float(np.clip((ret - RISK_FREE_RATE) / vol, -5.0, 5.0))
+        return float((ret - RISK_FREE_RATE) / vol)
 
     def calculate_beta(self, market_ticker: str = "SPY") -> float:
         """
@@ -618,26 +630,23 @@ class Portfolio:
         vol_mult = scenario.get("volatility_multiplier", 1.0)
         sector_overrides = scenario.get("sector_overrides", {})
 
-        # Bond duration sensitivity: price change ≈ -duration × rate_change
-        # Average investment-grade bond duration ~7 years
-        BOND_DURATION = 7.0
-        bond_price_impact = -BOND_DURATION * rate_change
+        betas = self.asset_betas()
 
         new_assets = []
         for asset in self.assets:
             new_price = asset.current_price
 
-            if asset.asset_class in ("Equity", "Equity ETF", "International Equity",
-                                      "International ETF", "Emerging Markets ETF",
-                                      "Cryptocurrency"):
-                # Apply broad market change
+            if asset.asset_class in EQUITY_ASSET_CLASSES:
+                # Market move scaled by the asset's own beta, plus any sector shock
                 sector_adj = sector_overrides.get(asset.sector, 0.0)
-                total_change = market_change + sector_adj
+                total_change = betas.get(asset.ticker, 1.0) * market_change + sector_adj
                 new_price = asset.current_price * (1 + total_change)
 
             elif asset.asset_class in ("Fixed Income", "Bond ETF"):
-                # Bond prices move inversely to rates
-                new_price = asset.current_price * (1 + bond_price_impact)
+                # Price change ≈ −modified duration × Δrate, with each bond fund's
+                # own duration (a 20+ year Treasury fund moves ~3× an aggregate fund)
+                duration = BOND_DURATIONS.get(asset.ticker, DEFAULT_BOND_DURATION)
+                new_price = asset.current_price * (1 - duration * rate_change)
                 # Also apply any general market drag
                 new_price *= (1 + market_change * 0.1)  # bonds partially follow
 
@@ -656,15 +665,25 @@ class Portfolio:
             new_asset.current_price = new_price
             new_assets.append(new_asset)
 
-        # Scale historical prices to reflect scenario volatility shift
+        # Scale historical *log returns* around their mean to reflect the
+        # scenario's volatility regime, then rebuild prices from the first one.
+        # The standard deviation of returns scales exactly by vol_mult, the mean
+        # return and correlations are unchanged, and prices stay positive.
+        # (Scaling price levels around their mean, as before, could produce
+        # negative prices for trending assets once vol_mult > ~2.)
         scaled_history = self.historical_prices.copy()
         if vol_mult != 1.0 and not scaled_history.empty:
-            # Simulate higher/lower volatility by scaling deviations from mean
             for col in scaled_history.columns:
-                mean_price = scaled_history[col].mean()
-                scaled_history[col] = (
-                    mean_price + (scaled_history[col] - mean_price) * vol_mult
-                )
+                s = scaled_history[col]
+                valid = s.where(s > 0)
+                lr = np.log(valid / valid.shift(1))
+                mu = lr.mean()
+                scaled_lr = (mu + (lr - mu) * vol_mult).fillna(0.0)
+                first = valid.first_valid_index()
+                if first is None:
+                    continue
+                rebuilt = valid.loc[first] * np.exp(scaled_lr.loc[first:].cumsum())
+                scaled_history[col] = rebuilt.reindex(s.index)
 
         scenario_portfolio = Portfolio(
             assets=new_assets,
@@ -673,7 +692,34 @@ class Portfolio:
             name=f"{self.name} [{scenario.get('name', 'Scenario')}]",
             is_scenario=True,
         )
+        # Scaling all returns by the same factor leaves betas unchanged
+        scenario_portfolio._betas = betas
         return scenario_portfolio
+
+    def asset_betas(self, market_ticker: str = "SPY") -> dict[str, float]:
+        """
+        Beta of each equity holding against the market, Blume-adjusted
+        (0.67·β + 0.33) to shrink noisy estimates towards 1. Assets without
+        enough history, or a portfolio without market data, default to 1.
+        """
+        if self._betas is not None:
+            return self._betas
+        betas: dict[str, float] = {}
+        hist = self.historical_prices
+        if market_ticker in hist.columns:
+            with np.errstate(invalid="ignore", divide="ignore"):
+                lr = np.log(hist / hist.shift(1)).replace([np.inf, -np.inf], np.nan)
+            m = lr[market_ticker]
+            for a in self.assets:
+                if a.asset_class not in EQUITY_ASSET_CLASSES or a.ticker not in lr.columns:
+                    continue
+                pair = pd.concat([lr[a.ticker], m], axis=1).dropna()
+                if len(pair) < 60 or pair.iloc[:, 1].var() == 0:
+                    continue
+                raw = pair.cov().iloc[0, 1] / pair.iloc[:, 1].var()
+                betas[a.ticker] = float(BLUME_WEIGHT * raw + (1 - BLUME_WEIGHT))
+        self._betas = betas
+        return betas
 
     def get_allocation_changes_for_rebalance(
         self, new_weights: dict[str, float]
