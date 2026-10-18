@@ -47,6 +47,36 @@ EQUITY_CLASSES = {
 }
 RISK_PROFILES = ["conservative", "moderate", "aggressive"]
 
+# Holdout universe: tickers never used while designing or tuning the system
+# (the main experiment uses validation.TICKER_META). Used to check that
+# results, in particular the Resilience Index weights, are not fitted to the
+# main universe.
+def _m(sector, asset_class="Equity"):
+    return {"sector": sector, "asset_class": asset_class, "country": "US"}
+
+
+HOLDOUT_META: dict[str, dict] = {
+    "CSCO": _m("Technology"), "ORCL": _m("Technology"), "INTC": _m("Technology"),
+    "IBM": _m("Technology"), "QCOM": _m("Technology"),
+    "KO": _m("Consumer Staples"), "PEP": _m("Consumer Staples"),
+    "PG": _m("Consumer Staples"), "COST": _m("Consumer Staples"),
+    "MRK": _m("Healthcare"), "ABT": _m("Healthcare"), "AMGN": _m("Healthcare"),
+    "C": _m("Financials"), "WFC": _m("Financials"), "MS": _m("Financials"),
+    "COP": _m("Energy"), "SLB": _m("Energy"),
+    "CAT": _m("Industrials"), "HON": _m("Industrials"), "MMM": _m("Industrials"),
+    "DIS": _m("Communication Services"), "VZ": _m("Communication Services"),
+    "MCD": _m("Consumer Discretionary"), "NKE": _m("Consumer Discretionary"),
+    "LOW": _m("Consumer Discretionary"),
+    "NEE": _m("Utilities"), "DUK": _m("Utilities"),
+    "IWM": _m("Equity ETF"), "QQQ": _m("Equity ETF"),
+    "EFA": _m("International ETF", "International Equity"),
+    "IEF": _m("Bond ETF", "Fixed Income"), "SHY": _m("Bond ETF", "Fixed Income"),
+    "LQD": _m("Bond ETF", "Fixed Income"),
+    "VNQ": _m("Real Estate ETF", "Real Estate"),
+    "SLV": _m("Commodities ETF", "Commodity"),
+}
+UNIVERSES = {"main": TICKER_META, "holdout": HOLDOUT_META}
+
 # Scorers that are compared against the static Baseline
 SCORER_NAMES = [
     "baseline",
@@ -141,7 +171,8 @@ def first_real_dates(prices: pd.DataFrame) -> pd.Series:
 # Simple (non-Digital-Twin) baselines
 # ─────────────────────────────────────────────────────────────────────────────
 
-def simple_scores(arch: dict, analysis_prices: pd.DataFrame) -> dict:
+def simple_scores(arch: dict, analysis_prices: pd.DataFrame,
+                  meta: dict[str, dict] | None = None) -> dict:
     """Equity share, HHI and plain historical risk measures."""
     tickers = [t for t in arch["tickers"] if t in analysis_prices.columns]
     w = np.array([arch["weights"][arch["tickers"].index(t)] for t in tickers])
@@ -149,7 +180,7 @@ def simple_scores(arch: dict, analysis_prices: pd.DataFrame) -> dict:
 
     equity_share = float(sum(
         wi for t, wi in zip(tickers, w)
-        if TICKER_META.get(t, {}).get("asset_class", "Equity") in EQUITY_CLASSES
+        if (meta or TICKER_META).get(t, {}).get("asset_class", "Equity") in EQUITY_CLASSES
     ))
     hhi = float((w ** 2).sum())
 
@@ -196,8 +227,20 @@ def resilience_scores(portfolio) -> dict:
 # RQ3: do the rebalancing recommendations improve the next year?
 # ─────────────────────────────────────────────────────────────────────────────
 
-REBALANCE_VARIANTS = ["hold", "profile_only", "dt", "markowitz"]
+REBALANCE_VARIANTS = ["hold", "profile_only", "dt", "markowitz", "hold_bond_mix"]
 OUTCOME_METRICS = ["maxdd", "vol", "ret", "sharpe", "cvar"]
+
+
+def eval_underwater(weights: dict[str, float], eval_prices: pd.DataFrame,
+                    threshold: float = 0.05) -> float:
+    """Share (%) of evaluation-window days more than `threshold` below the running peak."""
+    w = {t: x for t, x in weights.items() if x > 1e-9 and t in eval_prices.columns}
+    total = sum(w.values())
+    if total <= 0:
+        return np.nan
+    px = eval_prices[list(w)].ffill().bfill()
+    values = (px / px.iloc[0] * np.array([w[t] / total for t in w])).sum(axis=1)
+    return float(((values / values.cummax() - 1) < -threshold).mean() * 100)
 
 
 def eval_stats(weights: dict[str, float], eval_prices: pd.DataFrame) -> dict:
@@ -229,6 +272,45 @@ def eval_stats(weights: dict[str, float], eval_prices: pd.DataFrame) -> dict:
         "sharpe": (ret - RISK_FREE_RATE) / vol if vol > 0 else np.nan,
         "cvar": float(-tail.mean() * 100) if len(tail) else np.nan,
     }
+
+
+def equal_risk_bond_mix(portfolio, hold: dict[str, float],
+                        target: dict[str, float]) -> dict[str, float]:
+    """
+    The current portfolio blended with a bond fund so that its expected
+    volatility (estimated on the analysis window) equals that of `target`.
+    The simplest way to take the same risk as the DT plan: if the DT does not
+    beat it, its value is only "fewer equities", not its specific choices.
+    """
+    from .optimizer import evaluate_weights
+    from .portfolio import RISK_FREE_RATE
+
+    hist = portfolio.historical_prices
+    bond = next((t for t in ("BND", "AGG", "IEF") if t in hist.columns), None)
+    if bond is None:
+        return hold
+
+    def vol(w):
+        cols = [t for t, x in w.items() if x > 1e-9 and t in hist.columns]
+        return evaluate_weights(hist[cols].dropna(), {t: w[t] for t in cols},
+                                RISK_FREE_RATE)["volatility"]
+
+    def mix(a):
+        m = {t: x * (1 - a) for t, x in hold.items()}
+        m[bond] = m.get(bond, 0.0) + a
+        return m
+
+    goal = vol(target)
+    if not np.isfinite(goal) or vol(hold) <= goal:
+        return hold
+    lo, hi = 0.0, 1.0
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        if vol(mix(mid)) > goal:
+            lo = mid
+        else:
+            hi = mid
+    return mix(hi)
 
 
 def rebalancing_outcomes(portfolio, eval_prices: pd.DataFrame) -> dict:
@@ -265,6 +347,8 @@ def rebalancing_outcomes(portfolio, eval_prices: pd.DataFrame) -> dict:
         opt = engine.optimization_recommendation()
         variants["markowitz"] = ({t: w / 100 for t, w in opt["optimal_weights"].items()}
                                  if opt else hold)
+
+        variants["hold_bond_mix"] = equal_risk_bond_mix(portfolio, hold, variants["dt"])
     except Exception as exc:
         logger.warning("Rebalancing evaluation failed: %s", exc)
 
@@ -284,7 +368,8 @@ def rebalancing_summary(rows: pd.DataFrame, n_boot: int = 1000, seed: int = 0) -
     """
     rng = np.random.default_rng(seed)
     groups = [df.reset_index(drop=True) for _, df in rows.groupby("window")]
-    comparisons = [(v, "hold") for v in ("profile_only", "dt", "markowitz")] +                   [("dt", "profile_only"), ("dt", "markowitz")]
+    comparisons = [(v, "hold") for v in ("profile_only", "dt", "markowitz", "hold_bond_mix")] + \
+                  [("dt", "hold_bond_mix")] +                   [("dt", "profile_only"), ("dt", "markowitz")]
 
     def stat(dfs, a, b, m):
         vals = [np.nanmean(df[f"{a}_{m}"] - df[f"{b}_{m}"]) for df in dfs]
@@ -359,6 +444,10 @@ def _window_metric(df: pd.DataFrame, scorer: str, metric: str,
         return spearman(score, -dd)
     if metric == "auroc_fixed":
         return auroc(score, dd < fixed_threshold)
+    if metric == "spearman_underwater":
+        if "actual_underwater" not in df:
+            return np.nan
+        return spearman(score, df["actual_underwater"].to_numpy(dtype=float))
     if metric == "auroc_tercile":
         return auroc(score, dd <= np.quantile(dd, 1 / 3))
     raise ValueError(metric)
@@ -368,7 +457,7 @@ def _window_metric(df: pd.DataFrame, scorer: str, metric: str,
 # Results
 # ─────────────────────────────────────────────────────────────────────────────
 
-METRICS = ["spearman", "auroc_tercile", "auroc_fixed"]
+METRICS = ["spearman", "auroc_tercile", "auroc_fixed", "spearman_underwater"]
 
 
 @dataclass
@@ -437,6 +526,16 @@ class RobustResults:
                 wins = (self.per_window[f"{s}:{m}"] > self.per_window[f"baseline:{m}"])
                 valid = self.per_window[[f"{s}:{m}", f"baseline:{m}"]].notna().all(axis=1)
                 rec[f"{m}_win_rate"] = f"{int(wins[valid].sum())}/{int(valid.sum())}"
+                # Same paired comparison against historical volatility alone, the
+                # strongest single static measure
+                if s != "hist_vol":
+                    dv = np.array(boot[(s, m)]) - np.array(boot[("hist_vol", m)])
+                    dv = dv[~np.isnan(dv)]
+                    vol_point = float(np.nanmean(self.per_window[f"hist_vol:{m}"]))
+                    rec[f"{m}_diff_vs_vol"] = round(point - vol_point, 3)
+                    if len(dv):
+                        lo, hi = np.percentile(dv, [2.5, 97.5])
+                        rec[f"{m}_ci_vs_vol"] = f"[{lo:+.3f}, {hi:+.3f}]"
             recs.append(rec)
         self.summary = pd.DataFrame(recs)
         return self.summary
@@ -449,8 +548,9 @@ class RobustResults:
 def score_portfolio(arch: dict, analysis_prices: pd.DataFrame,
                     eval_prices: pd.DataFrame,
                     baseline: BaselineRiskScorer,
-                    proposed: ProposedRiskScorer) -> dict:
-    portfolio = build_portfolio_from_prices(arch, analysis_prices)
+                    proposed: ProposedRiskScorer,
+                    meta: dict[str, dict] | None = None) -> dict:
+    portfolio = build_portfolio_from_prices(arch, analysis_prices, meta=meta)
     b = baseline.score(portfolio)
     p = proposed.score(portfolio)
     hold = portfolio.get_weights_dict()
@@ -459,10 +559,13 @@ def score_portfolio(arch: dict, analysis_prices: pd.DataFrame,
         "proposed": p["risk_score"],
         **ablation_scores(p),
         **resilience_scores(portfolio),
-        **simple_scores(arch, analysis_prices),
+        **simple_scores(arch, analysis_prices, meta),
         # Ground truth: the portfolio the investor actually holds at the end of
         # the analysis window (weights drifted with returns), held for a year.
         "actual_drawdown": eval_stats(hold, eval_prices)["maxdd"],
+        # Second ground truth for the recovery dimension: share of next-year
+        # days spent more than 5% below the running peak (depth × duration)
+        "actual_underwater": eval_underwater(hold, eval_prices),
         **rebalancing_outcomes(portfolio, eval_prices),
         "n_assets": len(arch["tickers"]),
         "risk_profile": arch["risk_profile"],
@@ -481,6 +584,7 @@ def run_robust_validation(
     seed: int = 42,
     fixed_threshold: float = -15.0,
     progress: Callable[[str], None] | None = None,
+    meta: dict[str, dict] | None = None,
 ) -> RobustResults:
     """
     Run the rolling-window experiment on pre-fetched prices.
@@ -491,7 +595,8 @@ def run_robust_validation(
     say = progress or logger.info
     rng = np.random.default_rng(seed)
     starts = first_real_dates(prices)
-    universe_all = [t for t in TICKER_META if t in prices.columns]
+    meta = meta or TICKER_META
+    universe_all = [t for t in meta if t in prices.columns]
 
     baseline, proposed = BaselineRiskScorer(), ProposedRiskScorer()
     windows = rolling_windows(len(prices), analysis_days, eval_days, step_days)
@@ -516,7 +621,7 @@ def run_robust_validation(
 
         for arch in generate_random_portfolios(n_portfolios, universe, rng):
             try:
-                row = score_portfolio(arch, analysis, evaluation, baseline, proposed)
+                row = score_portfolio(arch, analysis, evaluation, baseline, proposed, meta)
             except Exception as exc:
                 logger.warning("Window %d, %s: %s", wid, arch["id"], exc)
                 continue

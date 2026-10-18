@@ -264,6 +264,7 @@ def build_portfolio_from_prices(
     archetype: dict,
     prices_df: pd.DataFrame,
     synthetic_value: float = 100_000.0,
+    meta: dict[str, dict] | None = None,
 ) -> Portfolio:
     """
     Build a Portfolio from pre-fetched price data and an archetype definition.
@@ -293,17 +294,17 @@ def build_portfolio_from_prices(
         current_price = float(series.iloc[-1])
         quantity = (synthetic_value * weight) / entry_price
 
-        meta = TICKER_META.get(ticker, {})
+        info = (meta or TICKER_META).get(ticker, TICKER_META.get(ticker, {}))
         assets.append(Asset(
             ticker=ticker,
             quantity=quantity,
             entry_price=entry_price,
             current_price=current_price,
-            name=meta.get("name", ticker),
-            sector=meta.get("sector", "Unknown"),
+            name=info.get("name", ticker),
+            sector=info.get("sector", "Unknown"),
             industry="",
-            asset_class=meta.get("asset_class", "Equity"),
-            country=meta.get("country", "US"),
+            asset_class=info.get("asset_class", "Equity"),
+            country=info.get("country", "US"),
         ))
 
     if not assets:

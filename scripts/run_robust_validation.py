@@ -29,15 +29,17 @@ from src.robust_validation import (
     rebalancing_summary,
     run_robust_validation,
 )
-from src.validation import TICKER_META, ValidationExperiment
+from src.robust_validation import UNIVERSES
+from src.validation import REBALANCE_CANDIDATES, ValidationExperiment
 
 
-def load_prices(out: Path, years: int) -> pd.DataFrame:
+def load_prices(out: Path, years: int, meta: dict) -> pd.DataFrame:
     cache = out / "prices.csv"
     if cache.exists():
         print(f"Using cached prices: {cache}")
         return pd.read_csv(cache, index_col=0, parse_dates=True)
-    tickers = sorted(set(TICKER_META) | {"SPY"})
+    # Universe + market reference + the ETFs the recommendations may buy
+    tickers = sorted(set(meta) | {"SPY"} | set(REBALANCE_CANDIDATES))
     print(f"Downloading {years}y of prices for {len(tickers)} tickers...")
     prices = fetch_historical_data(tickers, years=years)
     prices.to_csv(cache)
@@ -55,6 +57,9 @@ def main() -> None:
     ap.add_argument("--step-days", type=int, default=252)
     ap.add_argument("--bootstrap", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--universe", choices=sorted(UNIVERSES), default="main",
+                    help="main = the experiment's tickers; holdout = tickers never "
+                         "used while designing the system")
     ap.add_argument("--skip-original", action="store_true",
                     help="Skip the bootstrap of the original 30-portfolio experiment")
     args = ap.parse_args()
@@ -65,7 +70,8 @@ def main() -> None:
     t0 = time.time()
 
     # ── 1. Original experiment + bootstrap CI ───────────────────────────────
-    if not args.skip_original:
+    meta = UNIVERSES[args.universe]
+    if not args.skip_original and args.universe == "main":
         print("\n=== Original 30-portfolio experiment (paired bootstrap) ===")
         orig = ValidationExperiment().run()
         boot = bootstrap_original(orig, n_boot=2000, seed=args.seed)
@@ -77,7 +83,7 @@ def main() -> None:
 
     # ── 2. Rolling random-portfolio experiment ──────────────────────────────
     print("\n=== Rolling-window random-portfolio experiment ===")
-    prices = load_prices(out, args.years)
+    prices = load_prices(out, args.years, meta)
     res = run_robust_validation(
         prices,
         n_portfolios=args.n_portfolios,
@@ -86,6 +92,7 @@ def main() -> None:
         step_days=args.step_days,
         seed=args.seed,
         progress=print,
+        meta=meta,
     )
     res.rows.to_csv(out / "rows.csv", index=False)
     res.per_window.to_csv(out / "per_window.csv", index=False)

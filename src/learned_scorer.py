@@ -158,6 +158,8 @@ def evaluate_learned(rows: pd.DataFrame, min_train: int = 3, n_boot: int = 1000,
     scorers = ["baseline", "proposed", "resilience", "hist_vol"] + learned
     groups = [g.reset_index(drop=True) for _, g in test.groupby("window")]
     metrics = ["spearman", "auroc_fixed", "auroc_tercile"]
+    if "actual_underwater" in rows:
+        metrics.append("spearman_underwater")
 
     def per_window(dfs, s, m):
         return np.array([_window_metric(g, s, m, fixed_threshold) for g in dfs])
@@ -165,12 +167,16 @@ def evaluate_learned(rows: pd.DataFrame, min_train: int = 3, n_boot: int = 1000,
     rng = np.random.default_rng(seed)
     point = {(s, m): per_window(groups, s, m) for s in scorers for m in metrics}
     boots = {(s, m): [] for s in scorers for m in metrics}
+    boots_vol = {(s, m): [] for s in scorers for m in metrics}
     for _ in range(n_boot):
         sample = [g.iloc[rng.integers(0, len(g), len(g))] for g in groups]
         base = {m: per_window(sample, "baseline", m) for m in metrics}
+        vol = {m: per_window(sample, "hist_vol", m) for m in metrics}
         for s in scorers:
             for m in metrics:
-                boots[(s, m)].append(np.nanmean(per_window(sample, s, m) - base[m]))
+                own = per_window(sample, s, m)
+                boots[(s, m)].append(np.nanmean(own - base[m]))
+                boots_vol[(s, m)].append(np.nanmean(own - vol[m]))
 
     recs = []
     for s in scorers:
@@ -182,5 +188,8 @@ def evaluate_learned(rows: pd.DataFrame, min_train: int = 3, n_boot: int = 1000,
             lo, hi = np.nanpercentile(boots[(s, m)], [2.5, 97.5])
             rec[f"{m}_ci"] = f"[{lo:+.3f}, {hi:+.3f}]"
             rec[f"{m}_wins"] = f"{int(np.nansum(diff > 0))}/{int(np.sum(~np.isnan(diff)))}"
+            rec[f"{m}_diff_vs_vol"] = round(float(np.nanmean(point[(s, m)] - point[("hist_vol", m)])), 3)
+            lo, hi = np.nanpercentile(boots_vol[(s, m)], [2.5, 97.5])
+            rec[f"{m}_ci_vs_vol"] = f"[{lo:+.3f}, {hi:+.3f}]"
         recs.append(rec)
     return pd.DataFrame(recs), rows
