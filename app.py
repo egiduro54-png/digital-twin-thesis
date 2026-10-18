@@ -3266,18 +3266,65 @@ def render_robust_validation():
         _render_holdout_tab()
 
 
+def _render_holdout_verdict(holdout: pd.DataFrame, main: pd.DataFrame | None):
+    """State, from the numbers, whether the Resilience Index generalises."""
+    def row(df, scorer):
+        if df is None:
+            return None
+        r = df[df["scorer"] == scorer]
+        return None if r.empty else r.iloc[0]
+
+    ri_h, ri_m = row(holdout, "resilience"), row(main, "resilience")
+    if ri_h is None or "spearman_ci_vs_vol" not in ri_h:
+        return
+    vs_base = _significance(ri_h["spearman_ci"])
+    vs_vol = _significance(ri_h["spearman_ci_vs_vol"])
+    generalises = vs_base == "σημαντικά καλύτερο" and vs_vol != "σημαντικά χειρότερο"
+
+    main_txt = (f" (στο κύριο σύνολο: {ri_m['spearman']:.3f}, {ri_m['spearman_diff']:+.3f} έναντι "
+                f"Baseline)" if ri_m is not None else "")
+    lines = [
+        f"Resilience Index: Spearman **{ri_h['spearman']:.3f}**{main_txt}.",
+        f"Έναντι Baseline: {ri_h['spearman_diff']:+.3f} {ri_h['spearman_ci']}, **{vs_base}**.",
+        f"Έναντι ιστορικής μεταβλητότητας: {ri_h['spearman_diff_vs_vol']:+.3f} "
+        f"{ri_h['spearman_ci_vs_vol']}, **{vs_vol}**.",
+    ]
+    if generalises:
+        st.success("**Συμπέρασμα: ο Resilience Index γενικεύεται σε νέους τίτλους.**\n\n"
+                   + "\n\n".join(lines))
+    else:
+        dn = row(holdout, "ri_downside")
+        cvar = (f" Η συνιστώσα CVaR μόνη της γενικεύει (Spearman {dn['spearman']:.3f}), άρα "
+                "αυτό που δεν γενικεύει είναι ο συνδυασμός των υπόλοιπων συνιστωσών."
+                if dn is not None and _significance(dn["spearman_ci"]) == "σημαντικά καλύτερο"
+                else "")
+        st.warning(
+            "**Συμπέρασμα: ο Resilience Index δεν γενικεύεται ως προβλέπτης κινδύνου.** Το "
+            "πλεονέκτημά του στο κύριο σύνολο δεν επαναλαμβάνεται σε τίτλους που δεν "
+            "χρησιμοποιήθηκαν στον σχεδιασμό, πιθανότατα επειδή τα βάρη του ορίστηκαν με "
+            "γνώση των αποτελεσμάτων του κύριου συνόλου." + cvar + " Παραμένει χρήσιμος ως "
+            "επεξηγηματικός δείκτης (δείχνει πού είναι αδύναμο ένα χαρτοφυλάκιο), όχι ως "
+            "καλύτερος προβλέπτης.\n\n" + "\n\n".join(lines)
+        )
+
+
 def _render_holdout_tab():
     summary = _read_validation_csv("summary.csv", HOLDOUT_DIR)
     if summary is None:
         st.info("Δεν βρέθηκαν αποτελέσματα holdout "
                 "(`python -m scripts.run_robust_validation --universe holdout`).")
         return
+    from src.robust_validation import HOLDOUT_META
+
+    examples = [t for t in ("CSCO", "MRK", "CAT", "NEE", "IEF", "LQD", "IYR", "SLV")
+                if t in HOLDOUT_META]
     st.markdown(
-        "Το ίδιο πείραμα σε **35 τίτλους που δεν χρησιμοποιήθηκαν ποτέ** κατά τον σχεδιασμό "
-        "του συστήματος (π.χ. CSCO, KO, MRK, CAT, NEE, IEF, LQD, VNQ, SLV). Τα βάρη του "
-        "Resilience Index ορίστηκαν αφού είχε φανεί ότι το CVaR τα πάει καλά στο κύριο "
-        "σύνολο τίτλων· εδώ ελέγχεται αν το αποτέλεσμα γενικεύεται."
+        f"Το ίδιο πείραμα σε **{len(HOLDOUT_META)} τίτλους που δεν χρησιμοποιήθηκαν ποτέ** κατά "
+        f"τον σχεδιασμό του συστήματος (π.χ. {', '.join(examples)}). Τα βάρη του Resilience "
+        "Index ορίστηκαν αφού είχε φανεί ότι το CVaR τα πάει καλά στο κύριο σύνολο τίτλων· εδώ "
+        "ελέγχεται αν το αποτέλεσμα γενικεύεται."
     )
+    _render_holdout_verdict(summary, _read_validation_csv("summary.csv"))
     _render_ranking_table(summary)
     learned = _read_validation_csv("learned_summary.csv", HOLDOUT_DIR)
     if learned is not None:
