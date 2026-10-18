@@ -1757,6 +1757,7 @@ def render_investor(portfolio):
     if st.session_state.get("plan_weights"):
         allocations["Μετά τις προτάσεις του DT"] = st.session_state["plan_weights"]
 
+    goal = {"target": target, "years": years, "monthly": monthly}
     results = {}
     with st.spinner("Προσομοίωση 5.000 διαδρομών…"):
         for label, w in allocations.items():
@@ -1766,9 +1767,17 @@ def render_investor(portfolio):
                                                years=years, target=target)
             except ValueError as exc:
                 st.warning(f"{label}: {exc}")
-    if not results:
-        return
+    if results:
+        _render_goal_results(results, CMA_RETURNS)
 
+    st.markdown("---")
+    _render_twin_timeline(portfolio)
+    st.markdown("---")
+    _render_twin_state(portfolio, goal)
+
+
+def _render_goal_results(results: dict, CMA_RETURNS: dict):
+    """Goal Monte Carlo table, fan chart and assumptions."""
     rows = [{
         "Κατανομή": label,
         "Πιθανότητα επίτευξης": f"{r['probability']:.0%}",
@@ -1795,6 +1804,96 @@ def render_investor(portfolio):
         "μεταβλητότητα και συσχετίσεις από τις ιστορικές μηνιαίες αποδόσεις· μηνιαία "
         "επανεξισορρόπηση· χωρίς κόστη και φόρους."
     )
+
+
+def _render_twin_timeline(portfolio):
+    """Month-by-month replay of the twin with the data available at each date."""
+    from src.twin_timeline import timeline, first_alerts
+
+    st.subheader("3. Χρονολόγιο του Διδύμου")
+    st.caption(
+        "Το δίδυμο «ξαναζεί» κάθε τέλος μήνα με μόνο όσα δεδομένα υπήρχαν τότε: πώς "
+        "εξελίχθηκε ο κίνδυνος και πότε θα είχε σημάνει συναγερμός. Παραδοχή: οι τρέχουσες "
+        "ποσότητες διακρατήθηκαν σε όλη την περίοδο (δεν υπάρχει ιστορικό συναλλαγών)."
+    )
+    key = (portfolio.name, portfolio.risk_profile, round(portfolio.total_value, 2))
+    cached = st.session_state.get("twin_timeline")
+    if cached is None or cached[0] != key:
+        if not st.button("Υπολογισμός χρονολογίου"):
+            return
+        with st.spinner("Αναπαραγωγή του διδύμου μήνα προς μήνα…"):
+            st.session_state["twin_timeline"] = (key, timeline(portfolio))
+    tl = st.session_state["twin_timeline"][1]
+    if tl.empty:
+        st.info("Ανεπαρκές ιστορικό για χρονολόγιο (απαιτείται τουλάχιστον 1 έτος).")
+        return
+
+    chart = tl.set_index("date")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Resilience Index και drawdown**")
+        st.line_chart(chart[["resilience", "drawdown_pct"]].rename(columns={
+            "resilience": "Resilience Index", "drawdown_pct": "Drawdown από κορυφή (%)"}))
+    with c2:
+        st.markdown("**Ενεργά alerts και cautions**")
+        st.bar_chart(chart[["n_alert", "n_caution"]].rename(columns={
+            "n_alert": "Alerts", "n_caution": "Cautions"}))
+
+    fa = first_alerts(tl)
+    if not fa.empty:
+        st.markdown("**Πρώτη εμφάνιση κάθε συναγερμού**")
+        st.dataframe(fa.assign(
+            date=fa["date"].dt.date,
+            drawdown_pct=fa["drawdown_pct"].round(1),
+        ).rename(columns={"date": "Ημερομηνία", "alert": "Συναγερμός",
+                          "drawdown_pct": "Drawdown τότε (%)"}), hide_index=True)
+    worst = tl.loc[tl["drawdown_pct"].idxmin()]
+    st.caption(
+        f"Χειρότερο σημείο: {worst['date'].date()} με drawdown {worst['drawdown_pct']:.1f}% "
+        f"και Resilience Index {worst['resilience']:.0f}."
+    )
+
+
+def _render_twin_state(portfolio, goal: dict):
+    """Save the twin's state and compare with a previously saved one."""
+    import json
+    from src.twin_timeline import snapshot, compare_snapshots
+
+    st.subheader("4. Αποθήκευση και σύγκριση με προηγούμενη κατάσταση")
+    st.caption(
+        "Αποθηκεύστε την κατάσταση του διδύμου (προφίλ, ερωτηματολόγιο, στόχος, θέσεις, "
+        "βασικοί δείκτες). Την επόμενη φορά φορτώστε την για να δείτε τι άλλαξε από τότε."
+    )
+    current = snapshot(portfolio, st.session_state.get("questionnaire_result"), goal)
+    st.download_button(
+        "💾 Αποθήκευση κατάστασης (JSON)",
+        data=json.dumps(current, ensure_ascii=False, indent=1),
+        file_name=f"digital_twin_{datetime.date.today().isoformat()}.json",
+        mime="application/json",
+    )
+
+    uploaded = st.file_uploader("Φόρτωση προηγούμενης κατάστασης", type=["json"],
+                                key="twin_state_upload")
+    if uploaded is None:
+        return
+    try:
+        old = json.loads(uploaded.read().decode("utf-8"))
+    except Exception as exc:
+        st.error(f"Μη έγκυρο αρχείο κατάστασης: {exc}")
+        return
+    st.markdown(f"**Από την αποθήκευση της {old.get('saved_at', '—')} μέχρι σήμερα**")
+    if old.get("risk_profile") != current["risk_profile"]:
+        st.info(f"Το προφίλ άλλαξε: «{RISK_PROFILE_LABELS.get(old.get('risk_profile'), old.get('risk_profile'))}» "
+                f"→ «{RISK_PROFILE_LABELS.get(current['risk_profile'], current['risk_profile'])}».")
+    metrics, holdings = compare_snapshots(old, current)
+    st.dataframe(metrics, hide_index=True)
+    if not holdings.empty:
+        st.markdown("**Μεταβολές βαρών (≥ 0.5 μ.)**")
+        st.dataframe(holdings, hide_index=True)
+    if old.get("goal") and old["goal"] != goal:
+        g = old["goal"]
+        st.caption(f"Προηγούμενος στόχος: {format_currency(g.get('target'))} σε {g.get('years')} έτη "
+                   f"με {format_currency(g.get('monthly'))}/μήνα.")
 
 
 def render_docs():
