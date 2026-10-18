@@ -154,6 +154,9 @@ def _init_state():
             st.session_state[k] = v
 
 
+HISTORY_YEARS = 5  # covers the 2022 bear market for drawdown/recovery metrics
+
+
 def _load_portfolio(csv_path: str, risk_profile: str, name: str):
     with st.spinner("Λήψη δεδομένων αγοράς από Yahoo Finance…"):
         try:
@@ -161,26 +164,33 @@ def _load_portfolio(csv_path: str, risk_profile: str, name: str):
                 csv_path=csv_path,
                 risk_profile=risk_profile,
                 portfolio_name=name,
-                history_years=3,
+                history_years=HISTORY_YEARS,
             )
         except Exception as exc:
             st.error(f"Αποτυχία φόρτωσης χαρτοφυλακίου: {exc}")
             return
+    if _analyse_and_store(portfolio, risk_profile, name):
+        st.success("Το χαρτοφυλάκιο φορτώθηκε επιτυχώς!")
 
+
+def _analyse_and_store(portfolio, risk_profile: str, name: str) -> bool:
+    """Run risk analysis, scenarios and recommendations for a loaded portfolio."""
+    portfolio.risk_profile = risk_profile
+    portfolio._metrics = None
     try:
         monitor = RiskMonitor(portfolio)
         analysis = monitor.run_full_analysis()
     except Exception as exc:
         st.error(f"Αποτυχία ανάλυσης κινδύνου: {exc}")
         st.exception(exc)
-        return
+        return False
 
     try:
         engine = ScenarioEngine(portfolio)
     except Exception as exc:
         st.error(f"Αποτυχία μηχανισμού σεναρίων: {exc}")
         st.exception(exc)
-        return
+        return False
 
     try:
         rec_engine = RecommendationEngine(portfolio, monitor)
@@ -201,11 +211,12 @@ def _load_portfolio(csv_path: str, risk_profile: str, name: str):
     st.session_state["risk_analysis"] = analysis
     st.session_state["recommendations"] = recs
     st.session_state["optimization"] = optimization
+    st.session_state["plan_weights"] = dict(rec_engine.plan.w) if rec_engine is not None else None
     st.session_state["scenario_engine"] = engine
     st.session_state["portfolio_name"] = name
     st.session_state["risk_profile"] = risk_profile
     st.session_state["last_loaded"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    st.success("Το χαρτοφυλάκιο φορτώθηκε επιτυχώς!")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -221,11 +232,13 @@ def render_sidebar():
         index=0,
     )
 
+    # Keyed so the suitability questionnaire can set it
+    st.session_state.setdefault("sidebar_profile", "flexible")
     risk_profile = st.sidebar.selectbox(
         "Προφίλ κινδύνου επενδυτή",
         ["liquidity_plus", "defensive", "flexible", "growth", "dynamic"],
         format_func=lambda x: RISK_PROFILE_LABELS[x],
-        index=2,
+        key="sidebar_profile",
     )
 
     if source == "Δείγμα χαρτοφυλακίου":
@@ -1659,6 +1672,122 @@ def _render_recommendation_card(rec: dict):
 # ---------------------------------------------------------------------------
 # Documentation Tab
 # ---------------------------------------------------------------------------
+
+def render_investor(portfolio):
+    """Investor twin: suitability questionnaire and goal-based Monte Carlo."""
+    from src.investor import QUESTIONS, score_questionnaire, simulate_goal, CMA_RETURNS
+    from src.rebalance_plan import RebalancePlan
+
+    st.header("Επενδυτής & Στόχοι")
+    st.markdown(
+        "Το ψηφιακό δίδυμο δεν αναπαριστά μόνο το χαρτοφυλάκιο αλλά και τον επενδυτή: "
+        "το προφίλ κινδύνου του και τους στόχους του."
+    )
+
+    # ── Suitability questionnaire ─────────────────────────────────────────
+    st.subheader("1. Ερωτηματολόγιο Καταλληλότητας")
+    st.caption(
+        "Επτά ερωτήσεις τύπου MiFID II. Οι ερωτήσεις ικανότητας ανάληψης ζημίας "
+        "(ορίζοντας, εισόδημα, ρευστότητα) θέτουν ανώτατο όριο στο προφίλ, ανεξάρτητα "
+        "από τη διάθεση για κίνδυνο."
+    )
+    with st.form("questionnaire"):
+        answers = {}
+        for q in QUESTIONS:
+            label = q["text"] + ("  *(ικανότητα ζημίας)*" if q["capacity"] else "")
+            choice = st.radio(label, q["options"], index=2, key=f"q_{q['id']}")
+            answers[q["id"]] = q["options"].index(choice)
+        submitted = st.form_submit_button("Υπολογισμός προφίλ")
+    if submitted:
+        st.session_state["questionnaire_result"] = score_questionnaire(answers)
+
+    result = st.session_state.get("questionnaire_result")
+    if result:
+        prof = result["profile"]
+        c1, c2 = st.columns(2)
+        c1.metric("Βαθμολογία", f"{result['score']} / {result['max_score']}")
+        c2.metric("Προτεινόμενο προφίλ", RISK_PROFILE_LABELS[prof])
+        if result["capped_by"]:
+            q = next(x for x in QUESTIONS if x["id"] == result["capped_by"])
+            st.info(
+                f"Η διάθεση για κίνδυνο αντιστοιχεί σε «{RISK_PROFILE_LABELS[result['uncapped_profile']]}», "
+                f"αλλά η απάντηση στο «{q['text']}» περιορίζει το προφίλ σε «{RISK_PROFILE_LABELS[prof]}»."
+            )
+        current = st.session_state.get("risk_profile")
+        if portfolio is not None and current and current != prof:
+            st.warning(
+                f"Το χαρτοφυλάκιο αναλύεται με προφίλ «{RISK_PROFILE_LABELS.get(current, current)}», "
+                f"ενώ το ερωτηματολόγιο προτείνει «{RISK_PROFILE_LABELS[prof]}»."
+            )
+            if st.button("Εφαρμογή του προτεινόμενου προφίλ"):
+                st.session_state["sidebar_profile"] = prof
+                if _analyse_and_store(portfolio, prof, st.session_state.get("portfolio_name", "")):
+                    st.rerun()
+        elif portfolio is None:
+            if st.button("Ορισμός ως προφίλ για την επόμενη φόρτωση"):
+                st.session_state["sidebar_profile"] = prof
+                st.rerun()
+
+    st.markdown("---")
+
+    # ── Goal-based Monte Carlo ────────────────────────────────────────────
+    st.subheader("2. Στόχος και Πιθανότητα Επίτευξης (Monte Carlo)")
+    if portfolio is None:
+        st.info("Φορτώστε χαρτοφυλάκιο για να υπολογιστεί η πιθανότητα επίτευξης στόχου.")
+        return
+
+    total = portfolio.total_value
+    g1, g2, g3 = st.columns(3)
+    target = g1.number_input("Ποσό-στόχος ($)", min_value=1_000.0,
+                             value=float(round(total * 2, -3)), step=10_000.0)
+    years = int(g2.slider("Ορίζοντας (έτη)", 1, 40, 10))
+    monthly = g3.number_input("Μηνιαία εισφορά ($)", min_value=0.0, value=500.0, step=100.0)
+
+    plan = RebalancePlan(portfolio)
+    groups = {t: plan.group(t) for t in portfolio.historical_prices.columns}
+    allocations = {"Τρέχον χαρτοφυλάκιο": portfolio.get_weights_dict()}
+    if st.session_state.get("plan_weights"):
+        allocations["Μετά τις προτάσεις του DT"] = st.session_state["plan_weights"]
+
+    results = {}
+    with st.spinner("Προσομοίωση 5.000 διαδρομών…"):
+        for label, w in allocations.items():
+            try:
+                results[label] = simulate_goal(portfolio.historical_prices, w, groups,
+                                               initial=total, monthly_contribution=monthly,
+                                               years=years, target=target)
+            except ValueError as exc:
+                st.warning(f"{label}: {exc}")
+    if not results:
+        return
+
+    rows = [{
+        "Κατανομή": label,
+        "Πιθανότητα επίτευξης": f"{r['probability']:.0%}",
+        "Διάμεση τελική αξία": format_currency(r["median"]),
+        "Δυσμενές (5%)": format_currency(r["p5"]),
+        "Ευνοϊκό (95%)": format_currency(r["p95"]),
+        "Αναμ. ετήσια απόδοση": f"{r['expected_annual_return']:.1%}",
+        "Ετήσια μεταβλητότητα": f"{r['annual_volatility']:.1%}",
+    } for label, r in results.items()]
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
+    first = next(iter(results.values()))
+    st.caption(f"Συνολικές εισφορές (αρχικό + μηνιαίες): {format_currency(first['invested'])}.")
+
+    fan = pd.DataFrame({"Έτος": first["fan"]["year"]})
+    for label, r in results.items():
+        fan[f"{label} — διάμεσος"] = r["fan"]["p50"].values
+        fan[f"{label} — δυσμενές 5%"] = r["fan"]["p5"].values
+    st.line_chart(fan.set_index("Έτος"))
+
+    st.caption(
+        "Υποθέσεις: αναμενόμενες ετήσιες αποδόσεις μακροπρόθεσμες ανά κατηγορία "
+        f"(μετοχές {CMA_RETURNS['equity']:.0%}, ομόλογα {CMA_RETURNS['fixed_income']:.0%}, "
+        f"λοιπά {CMA_RETURNS['other']:.0%}), όχι ο μέσος του πρόσφατου ιστορικού· "
+        "μεταβλητότητα και συσχετίσεις από τις ιστορικές μηνιαίες αποδόσεις· μηνιαία "
+        "επανεξισορρόπηση· χωρίς κόστη και φόρους."
+    )
+
 
 def render_docs():
     st.header("📖 Τεκμηρίωση Συστήματος")
@@ -3122,13 +3251,21 @@ def main():
     portfolio = st.session_state.get("portfolio")
 
     # Tab 5 (Πειραματική Αξιολόγηση) is always available, independent of portfolio
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab_inv, tab5 = st.tabs([
         "📈 Επισκόπηση Χαρτοφυλακίου",
         "🔀 Ανάλυση Σεναρίων",
         "⚠️ Παρακολούθηση Κινδύνου",
         "💡 Προτάσεις Αναδιάρθρωσης",
+        "👤 Επενδυτής & Στόχοι",
         "🔬 Πειραματική Αξιολόγηση",
     ])
+
+    with tab_inv:
+        try:
+            render_investor(portfolio)
+        except Exception as e:
+            st.error(f"Σφάλμα καρτέλας επενδυτή: {e}")
+            st.exception(e)
 
     with tab1:
         if portfolio is None:
