@@ -50,6 +50,14 @@ class TestTimeline:
         pd.testing.assert_series_equal(early1["resilience"], early2["resilience"])
         pd.testing.assert_series_equal(early1["n_alert"], early2["n_alert"])
 
+    def test_last_point_matches_live_analysis(self):
+        # Expanding window: the latest month end uses the same data as the live twin
+        from src.resilience import compute_resilience
+        p = _portfolio()
+        tl = timeline(p)
+        assert tl["date"].iloc[-1] == p.historical_prices.index[-1]
+        assert tl["resilience"].iloc[-1] == pytest.approx(compute_resilience(p)["score"])
+
     def test_first_alerts_one_row_per_title(self):
         fa = first_alerts(timeline(_portfolio()))
         assert fa["alert"].is_unique

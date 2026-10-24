@@ -144,6 +144,12 @@ class TestMetricCalculations:
         dr = simple_portfolio.calculate_diversification_ratio()
         assert dr > 1.0
 
+    def test_diversification_ratio_matches_resilience(self, simple_portfolio):
+        # Overview and Resilience Index must report the same ratio
+        from src.resilience import compute_resilience
+        ri_dr = compute_resilience(simple_portfolio)["raw"]["diversification_ratio"]
+        assert simple_portfolio.calculate_diversification_ratio() == pytest.approx(ri_dr, abs=1e-3)
+
     def test_get_metrics_keys(self, simple_portfolio):
         m = simple_portfolio.get_metrics()
         for key in ("total_value", "sharpe_ratio", "volatility_annual_pct",

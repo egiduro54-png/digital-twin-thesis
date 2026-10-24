@@ -474,10 +474,12 @@ class Portfolio:
 
         w = np.array([weights[t] for t in available])
         w = w / w.sum() if w.sum() > 0 else w
+        # Numerator and denominator over the same window (full history);
+        # mixing windows (e.g. 1y portfolio vol) biases the ratio.
         individual_vols = returns[available].std() * np.sqrt(TRADING_DAYS)
         weighted_avg_vol = float(np.dot(w, individual_vols.values))
 
-        port_vol = self.calculate_volatility()
+        port_vol = float((returns[available] @ w).std() * np.sqrt(TRADING_DAYS))
         if np.isnan(port_vol) or port_vol == 0:
             return float("nan")
         return weighted_avg_vol / port_vol

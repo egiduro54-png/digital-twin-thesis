@@ -34,11 +34,13 @@ MIN_HISTORY_DAYS = 252  # one year before the first timeline point
 FORWARD_DAYS = 126      # "what followed" horizon: ~6 months
 
 
-def _portfolio_at(portfolio: Portfolio, date: pd.Timestamp, lookback_days: int) -> Portfolio | None:
+def _portfolio_at(portfolio: Portfolio, date: pd.Timestamp,
+                  lookback_days: int | None) -> Portfolio | None:
     hist = portfolio.historical_prices.loc[:date]
     if len(hist) < MIN_HISTORY_DAYS:
         return None
-    hist = hist.iloc[-lookback_days:]
+    if lookback_days is not None:
+        hist = hist.iloc[-lookback_days:]
     last = hist.iloc[-1]
     assets = []
     for a in portfolio.assets:
@@ -50,12 +52,15 @@ def _portfolio_at(portfolio: Portfolio, date: pd.Timestamp, lookback_days: int) 
     return Portfolio(assets, hist, risk_profile=portfolio.risk_profile, name=portfolio.name)
 
 
-def timeline(portfolio: Portfolio, lookback_days: int = 3 * 252,
+def timeline(portfolio: Portfolio, lookback_days: int | None = None,
              freq: str = "ME") -> pd.DataFrame:
     """
     One row per month end: value, Resilience Index, alert/caution counts,
     1y volatility, drawdown from the running peak, and the titles of the
     alerts raised at that date.
+
+    lookback_days=None uses all history up to each date (expanding window),
+    so the last point matches the live analysis of the same portfolio.
     """
     hist = portfolio.historical_prices
     if hist.empty:

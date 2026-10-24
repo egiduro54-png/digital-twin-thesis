@@ -500,156 +500,19 @@ def render_overview(portfolio):
               delta_color="inverse")
     a3.metric("Στόχος Προφίλ", RISK_PROFILE_LABELS.get(alignment["risk_profile"], alignment["risk_profile"]))
 
-    # --- Rebalancing button & before/after comparison ---
-    st.markdown("---")
-    st.subheader("Πρόταση Ανακατανομής (Rebalancing)")
-    st.markdown(
-        "Πατήστε το κουμπί για να δείτε τι αλλάζει αν το χαρτοφυλάκιο "
-        "επαναφερθεί στην κατανομή-στόχο του προφίλ σας."
-    )
-    if st.button("Προτείνω Ανακατανομή Κεφαλαίων"):
-        _render_rebalancing_comparison(portfolio, alignment, metrics)
+    # --- Pointer to the coordinated rebalancing plan ---
+    if max(abs(alignment.get("equity_drift_pct") or 0),
+           abs(alignment.get("fixed_income_drift_pct") or 0)) > 5:
+        st.info(
+            "Το χαρτοφυλάκιο αποκλίνει από την κατανομή-στόχο του προφίλ. Το συντονισμένο σχέδιο "
+            "ανακατανομής (ανά τίτλο, με τις επιπτώσεις του) βρίσκεται στην καρτέλα "
+            "**Προτάσεις Αναδιάρθρωσης**."
+        )
 
     # --- Correlation Heatmap ---
     st.markdown("---")
     with st.expander("🔗 Πίνακας Συσχέτισης Τίτλων (Correlation Matrix)", expanded=False):
         _plot_correlation_heatmap(portfolio)
-
-
-def _render_rebalancing_comparison(portfolio, alignment: dict, metrics: dict):
-    total = portfolio.total_value
-    rp = alignment["risk_profile"]
-
-    from src.portfolio import Portfolio as _P
-    targets = _P.TARGET_ALLOCATION.get(rp, {})
-
-    current_eq = alignment["current_equity_pct"]
-    current_fi = alignment["current_fixed_income_pct"]
-    target_eq = targets.get("equity", 0) * 100
-    target_fi = targets.get("fixed_income", 0) * 100
-    target_alt = targets.get("other", 0) * 100
-
-    eq_drift = current_eq - target_eq
-    fi_drift = current_fi - target_fi
-
-    if abs(eq_drift) < 2 and abs(fi_drift) < 2:
-        st.success("Το χαρτοφυλάκιο είναι ήδη εντός 2% του στόχου — δεν χρειάζεται ανακατανομή.")
-        return
-
-    shift = abs(eq_drift) / 100 * total
-    stats_before, stats_after, missing = _rebalance_stats(portfolio, targets)
-
-    st.markdown("#### Σύγκριση Πριν / Μετά την Ανακατανομή")
-
-    col_before, col_after = st.columns(2)
-
-    with col_before:
-        st.markdown("**Τρέχουσα κατανομή (Πριν)**")
-        st.write(f"- Μετοχές (Equity): **{current_eq:.1f}%**")
-        st.write(f"- Ομόλογα (Fixed Income): **{current_fi:.1f}%**")
-        if stats_before:
-            st.write(f"- Volatility: **{stats_before['volatility'] * 100:.1f}%**")
-            st.write(f"- Sharpe Ratio: **{stats_before['sharpe']:.2f}**")
-
-    with col_after:
-        st.markdown("**Κατανομή-στόχος (Μετά)**")
-        st.write(f"- Μετοχές (Equity): **{target_eq:.1f}%**")
-        st.write(f"- Ομόλογα (Fixed Income): **{target_fi:.1f}%**")
-        if stats_after:
-            st.write(f"- Volatility (εκτίμηση): **{stats_after['volatility'] * 100:.1f}%**")
-            st.write(f"- Sharpe Ratio (εκτίμηση): **{stats_after['sharpe']:.2f}**")
-
-    st.markdown("---")
-    st.markdown("**Προτεινόμενες Κινήσεις:**")
-    if eq_drift > 0:
-        st.write(
-            f"- Πώληση μετοχών αξίας **{format_currency(shift)}** "
-            f"(μείωση Equity από {current_eq:.1f}% → {target_eq:.1f}%)"
-        )
-        st.write(
-            f"- Αγορά ομολόγων αξίας **{format_currency(shift)}** "
-            f"(αύξηση Fixed Income από {current_fi:.1f}% → {target_fi:.1f}%)"
-        )
-    else:
-        st.write(
-            f"- Αγορά μετοχών αξίας **{format_currency(shift)}** "
-            f"(αύξηση Equity από {current_eq:.1f}% → {target_eq:.1f}%)"
-        )
-        st.write(
-            f"- Πώληση ομολόγων αξίας **{format_currency(shift)}** "
-            f"(μείωση Fixed Income από {current_fi:.1f}% → {target_fi:.1f}%)"
-        )
-    if target_alt > 0:
-        st.info(
-            f"Το προφίλ «{RISK_PROFILE_LABELS.get(rp, rp)}» προβλέπει επίσης "
-            f"{target_alt:.0f}% σε εναλλακτικές κατηγορίες (π.χ. Real Estate, Commodities)."
-        )
-    if missing:
-        st.warning(
-            "Το χαρτοφυλάκιο δεν περιέχει τίτλους κατηγορίας: " + ", ".join(missing)
-            + ". Το αντίστοιχο ποσοστό-στόχος κατανεμήθηκε αναλογικά στις υπάρχουσες "
-            "κατηγορίες, οπότε η εκτίμηση «Μετά» δεν αντιστοιχεί πλήρως στο προφίλ."
-        )
-    st.caption(
-        "Σημείωση: Volatility και Sharpe πριν και μετά υπολογίζονται με τον ίδιο εκτιμητή "
-        "(ιστορικές ημερήσιες αποδόσεις, ετησιοποιημένες), διατηρώντας τις αναλογίες των "
-        "τίτλων εντός κάθε κατηγορίας, γι' αυτό μπορεί να διαφέρουν ελαφρά από τους δείκτες "
-        "της Επισκόπησης. Μια βελτιστοποιημένη εναλλακτική (Markowitz) υπάρχει στην καρτέλα "
-        "Προτάσεις Αναδιάρθρωσης."
-    )
-
-
-_EQUITY_CLASSES = {"Equity", "Equity ETF", "International Equity", "International ETF",
-                   "Emerging Markets ETF", "Cryptocurrency"}
-_FI_CLASSES = {"Fixed Income", "Bond ETF"}
-
-
-def _rebalance_stats(portfolio, targets: dict):
-    """
-    Before/after stats for moving to the profile's class targets, keeping the
-    relative weights of holdings within each class. Returns
-    (stats_before, stats_after, missing_class_labels).
-    """
-    from src.optimizer import evaluate_weights
-    from src.portfolio import RISK_FREE_RATE
-
-    hist = portfolio.historical_prices
-    tickers = [t for t in portfolio.tickers if t in hist.columns]
-    if len(tickers) < 2:
-        return None, None, []
-    prices = hist[tickers].dropna()
-    current = portfolio.get_weights_dict()
-
-    def _group(asset):
-        if asset.asset_class in _EQUITY_CLASSES:
-            return "equity"
-        if asset.asset_class in _FI_CLASSES:
-            return "fixed_income"
-        return "other"
-
-    groups = {}
-    for a in portfolio.assets:
-        if a.ticker in tickers:
-            groups.setdefault(_group(a), []).append(a.ticker)
-
-    labels = {"equity": "Μετοχές", "fixed_income": "Ομόλογα", "other": "Λοιπά"}
-    shares = {g: targets.get(g, 0.0) for g in labels}
-    missing = [labels[g] for g, v in shares.items() if v > 0 and g not in groups]
-    present_total = sum(v for g, v in shares.items() if g in groups)
-    if present_total <= 0:
-        return None, None, missing
-
-    target_w = {}
-    for g, members in groups.items():
-        share = shares[g] / present_total
-        in_group = sum(current.get(t, 0.0) for t in members)
-        for t in members:
-            rel = current.get(t, 0.0) / in_group if in_group > 0 else 1.0 / len(members)
-            target_w[t] = share * rel
-
-    before = evaluate_weights(prices, current, RISK_FREE_RATE)
-    after = evaluate_weights(prices, target_w, RISK_FREE_RATE)
-    return before, after, missing
 
 
 def _plot_correlation_heatmap(portfolio):
@@ -2244,24 +2107,11 @@ Collapsible expander στο κάτω μέρος της καρτέλας. Δεί�
 
 ---
 
-**🔄 Κουμπί Πρότασης Ανακατανομής (Rebalancing)**
+**🔄 Ανακατανομή**
 
-Στο κάτω μέρος της καρτέλας υπάρχει κουμπί **«Προτείνω Ανακατανομή Κεφαλαίων»**.
-
-Όταν το πατάς, εμφανίζεται **σύγκριση πριν / μετά**:
-
-| | Πριν | Μετά (εκτίμηση) |
-|---|---|---|
-| Equity % | π.χ. 80% | 60% (στόχος) |
-| Fixed Income % | π.χ. 10% | 30% (στόχος) |
-| Volatility | π.χ. 18.5% | ~14.2% |
-| Sharpe Ratio | π.χ. 0.72 | ~0.91 |
-
-Και τις συγκεκριμένες κινήσεις που χρειάζονται: «Πώληση μετοχών αξίας $X, Αγορά
-ομολόγων αξίας $X».
-
-Σημείωση: Οι τιμές μετά το rebalancing είναι **εκτιμήσεις** βασισμένες σε γραμμικά
-μοντέλα. Για ακριβή ανάλυση trades ανά τίτλο, δες την καρτέλα Προτάσεις Αναδιάρθρωσης.
+Αν η κατανομή αποκλίνει πάνω από 5 μονάδες από τον στόχο του προφίλ, εμφανίζεται
+παραπομπή στην καρτέλα **Προτάσεις Αναδιάρθρωσης**, όπου βρίσκεται το ενιαίο,
+συντονισμένο σχέδιο ανακατανομής ανά τίτλο.
 """)
 
     # ------------------------------------------------------------------ tab 2

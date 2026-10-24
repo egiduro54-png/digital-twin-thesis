@@ -107,7 +107,7 @@
     },
     "financial_crisis_2008": {
       "name": "2008 Financial Crisis",
-      "description": "Replay of 2008 crisis: market -40%, rate hikes, extreme volatility",
+      "description": "Fallback parameters only; replaced at runtime by the historical replay in data/historical_crises.json",
       "category": "stress_test",
       "market_change": -0.40,
       "rate_change": 0.02,
@@ -121,7 +121,7 @@
     },
     "covid_crash_2020": {
       "name": "2020 COVID Crash",
-      "description": "Rapid market crash as seen in early 2020",
+      "description": "Fallback parameters only; replaced at runtime by the historical replay in data/historical_crises.json",
       "category": "stress_test",
       "market_change": -0.30,
       "rate_change": -0.015,
