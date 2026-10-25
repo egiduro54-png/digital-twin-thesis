@@ -994,6 +994,20 @@ def render_scenarios(portfolio, engine: ScenarioEngine):
     multi = engine.compare_multiple_scenarios(available_stress)
     _render_multi_scenario_table(multi)
 
+    st.markdown("---")
+    st.subheader("Χειρότερο Σενάριο")
+    st.caption("Εκτελεί και τα 14 προκαθορισμένα σενάρια και εντοπίζει αυτό με τη μεγαλύτερη απώλεια.")
+    if st.button("Εντοπισμός χειρότερου σεναρίου"):
+        predefined = [sid for sid, sc in engine.scenarios.items() if sc.get("category") != "Custom"]
+        worst = engine.find_worst_scenario(predefined)
+        if worst:
+            w1, w2 = st.columns(2)
+            w1.metric("Σενάριο", worst["scenario_name"])
+            w2.metric("Απώλεια αξίας", format_currency(worst["portfolio_loss"]),
+                      delta=f"{worst['portfolio_loss_pct']:.1f}%", delta_color="normal")
+        else:
+            st.info("Δεν ήταν δυνατός ο υπολογισμός των σεναρίων.")
+
 
 def _render_scenario_result(comparison: dict, engine: ScenarioEngine, scenario_id: str):
     name = comparison["scenario_name"]
