@@ -212,6 +212,7 @@ def _analyse_and_store(portfolio, risk_profile: str, name: str) -> bool:
     st.session_state["recommendations"] = recs
     st.session_state["optimization"] = optimization
     st.session_state["plan_weights"] = dict(rec_engine.plan.w) if rec_engine is not None else None
+    st.session_state["plan_trades"] = rec_engine.plan_trades() if rec_engine is not None else None
     st.session_state["scenario_engine"] = engine
     st.session_state["portfolio_name"] = name
     st.session_state["risk_profile"] = risk_profile
@@ -785,8 +786,7 @@ def _build_rebalanced_portfolio(portfolio, recs: list):
     import copy
     from src.portfolio import Asset, Portfolio as _Portfolio
 
-    raw_trades = [t for r in recs for t in r.get("trades", [])]
-    trades = _consolidate_trades(raw_trades, portfolio)
+    trades = _summary_trades(recs, portfolio)
     if not trades:
         return None
 
@@ -1233,6 +1233,19 @@ def _render_alert_card(alert: dict):
 # Tab 4: Προτάσεις Αναδιάρθρωσης
 # ---------------------------------------------------------------------------
 
+def _summary_trades(recs: list, portfolio) -> list:
+    """
+    Trades for the summary: the net move from the current portfolio to the
+    final coordinated plan. Summing each card's rounded trades drifts from it,
+    so the per-card consolidation is only a fallback.
+    """
+    plan = st.session_state.get("plan_trades")
+    if plan:
+        return [dict(t) for t in plan]
+    raw_trades = [t for r in recs for t in r.get("trades", [])]
+    return _consolidate_trades(raw_trades, portfolio)
+
+
 def _consolidate_trades(trades: list, portfolio) -> list:
     """
     Net trades per ticker (BUY minus SELL), cap SELLs to holdings,
@@ -1472,8 +1485,7 @@ def render_recommendations(recs: list):
     st.markdown("---")
     st.subheader("Σύνοψη Συναλλαγών (Trade Summary)")
     portfolio = st.session_state.get("portfolio")
-    raw_trades = [t for r in recs for t in r.get("trades", [])]
-    all_trades = _consolidate_trades(raw_trades, portfolio)
+    all_trades = _summary_trades(recs, portfolio)
     if all_trades:
         sell_total = sum(t["value"] for t in all_trades if t.get("action") == "SELL")
         buy_total = sum(t["value"] for t in all_trades if t.get("action") == "BUY")
