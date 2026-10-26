@@ -1,0 +1,15 @@
+﻿regime,windows,scorer,label,value,diff_vs_hist_vol,ci_vs_hist_vol,significant_vs_hist_vol,diff_vs_baseline,ci_vs_baseline,significant_vs_baseline
+stress,4,baseline,Baseline,0.511,-0.084,"[-0.116, -0.052]",True,,,
+stress,4,proposed,DT scorer,0.524,-0.071,"[-0.107, -0.032]",True,0.013,"[-0.033, +0.059]",False
+stress,4,alerts_scenarios,DT χωρίς drift,0.533,-0.062,"[-0.097, -0.026]",True,0.022,"[-0.022, +0.067]",False
+stress,4,scenarios_only,Μόνο σενάρια,0.585,-0.01,"[-0.058, +0.036]",False,0.074,"[+0.015, +0.133]",True
+stress,4,resilience,Resilience Index,0.469,-0.126,"[-0.165, -0.089]",True,-0.041,"[-0.077, -0.009]",True
+stress,4,ri_downside,RI: CVaR/downside,0.596,0.001,"[-0.017, +0.019]",False,0.085,"[+0.049, +0.120]",True
+stress,4,hist_vol,Ιστορική μεταβλητότητα,0.595,,,,0.084,"[+0.052, +0.116]",True
+calm,8,baseline,Baseline,0.537,-0.071,"[-0.098, -0.043]",True,,,
+calm,8,proposed,DT scorer,0.538,-0.07,"[-0.096, -0.042]",True,0.0,"[-0.034, +0.034]",False
+calm,8,alerts_scenarios,DT χωρίς drift,0.543,-0.065,"[-0.091, -0.038]",True,0.006,"[-0.028, +0.039]",False
+calm,8,scenarios_only,Μόνο σενάρια,0.419,-0.189,"[-0.224, -0.150]",True,-0.118,"[-0.162, -0.071]",True
+calm,8,resilience,Resilience Index,0.537,-0.071,"[-0.094, -0.049]",True,0.0,"[-0.024, +0.026]",False
+calm,8,ri_downside,RI: CVaR/downside,0.596,-0.012,"[-0.025, -0.001]",True,0.058,"[+0.031, +0.085]",True
+calm,8,hist_vol,Ιστορική μεταβλητότητα,0.608,,,,0.071,"[+0.043, +0.098]",True

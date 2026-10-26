@@ -1,0 +1,22 @@
+﻿threshold,fragile_pct,scorer,label,value,diff_vs_hist_vol,ci_vs_hist_vol,significant_vs_hist_vol,diff_vs_baseline,ci_vs_baseline,significant_vs_baseline
+-10.0,72.2,baseline,Baseline,0.775,-0.07,"[-0.089, -0.050]",True,,,
+-10.0,72.2,proposed,DT scorer,0.8,-0.045,"[-0.063, -0.028]",True,0.025,"[-0.000, +0.048]",False
+-10.0,72.2,alerts_scenarios,DT χωρίς drift,0.807,-0.038,"[-0.056, -0.022]",True,0.032,"[+0.007, +0.054]",True
+-10.0,72.2,scenarios_only,Μόνο σενάρια,0.785,-0.061,"[-0.082, -0.039]",True,0.01,"[-0.021, +0.041]",False
+-10.0,72.2,resilience,Resilience Index,0.784,-0.062,"[-0.082, -0.044]",True,0.009,"[-0.010, +0.027]",False
+-10.0,72.2,ri_downside,RI: CVaR/downside,0.847,0.002,"[-0.008, +0.011]",False,0.072,"[+0.054, +0.090]",True
+-10.0,72.2,hist_vol,Ιστορική μεταβλητότητα,0.845,,,,0.07,"[+0.050, +0.089]",True
+-15.0,41.9,baseline,Baseline,0.766,-0.035,"[-0.050, -0.021]",True,,,
+-15.0,41.9,proposed,DT scorer,0.761,-0.04,"[-0.055, -0.025]",True,-0.006,"[-0.023, +0.013]",False
+-15.0,41.9,alerts_scenarios,DT χωρίς drift,0.766,-0.035,"[-0.048, -0.020]",True,0.0,"[-0.016, +0.019]",False
+-15.0,41.9,scenarios_only,Μόνο σενάρια,0.731,-0.069,"[-0.090, -0.049]",True,-0.035,"[-0.060, -0.011]",True
+-15.0,41.9,resilience,Resilience Index,0.754,-0.047,"[-0.061, -0.033]",True,-0.012,"[-0.026, +0.002]",False
+-15.0,41.9,ri_downside,RI: CVaR/downside,0.801,0.0,"[-0.008, +0.009]",False,0.035,"[+0.019, +0.051]",True
+-15.0,41.9,hist_vol,Ιστορική μεταβλητότητα,0.801,,,,0.035,"[+0.021, +0.050]",True
+-20.0,23.6,baseline,Baseline,0.841,-0.014,"[-0.031, +0.006]",False,,,
+-20.0,23.6,proposed,DT scorer,0.826,-0.029,"[-0.051, -0.006]",True,-0.015,"[-0.037, +0.006]",False
+-20.0,23.6,alerts_scenarios,DT χωρίς drift,0.83,-0.025,"[-0.046, -0.004]",True,-0.011,"[-0.034, +0.010]",False
+-20.0,23.6,scenarios_only,Μόνο σενάρια,0.773,-0.082,"[-0.111, -0.055]",True,-0.068,"[-0.100, -0.038]",True
+-20.0,23.6,resilience,Resilience Index,0.827,-0.028,"[-0.048, -0.008]",True,-0.014,"[-0.029, +0.001]",False
+-20.0,23.6,ri_downside,RI: CVaR/downside,0.852,-0.003,"[-0.012, +0.006]",False,0.011,"[-0.010, +0.030]",False
+-20.0,23.6,hist_vol,Ιστορική μεταβλητότητα,0.855,,,,0.014,"[-0.006, +0.031]",False
