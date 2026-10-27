@@ -216,7 +216,11 @@ def _analyse_and_store(portfolio, risk_profile: str, name: str) -> bool:
     st.session_state["scenario_engine"] = engine
     st.session_state["portfolio_name"] = name
     st.session_state["risk_profile"] = risk_profile
-    st.session_state["last_loaded"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    # With frozen data (DT_AS_OF) show the data date, not the load time
+    as_of = os.environ.get("DT_AS_OF")
+    st.session_state["last_loaded"] = (
+        datetime.date.fromisoformat(as_of).strftime("%d/%m/%Y") if as_of
+        else datetime.datetime.now().strftime("%d/%m/%Y %H:%M"))
     return True
 
 
