@@ -46,6 +46,7 @@ SECTOR_FALLBACK = {
     "VNQ": "Real Estate ETF",
     "IYR": "Real Estate ETF",
     "GLD": "Commodities ETF",
+    "BIL": "Cash ETF",
     "SLV": "Commodities ETF",
     "GSG": "Commodities ETF",
     "BTC-USD": "Cryptocurrency",
@@ -77,6 +78,7 @@ ASSET_CLASS_FALLBACK = {
     "HYG": "Fixed Income", "VCIT": "Fixed Income", "VCSH": "Fixed Income",
     "VNQ": "Real Estate", "IYR": "Real Estate",
     "GLD": "Commodity", "SLV": "Commodity", "GSG": "Commodity",
+    "BIL": "Cash",
     "BTC-USD": "Cryptocurrency", "ETH-USD": "Cryptocurrency",
 }
 

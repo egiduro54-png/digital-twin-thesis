@@ -63,7 +63,7 @@ TICKER_META: dict[str, dict] = {
 }
 
 # ETFs the RecommendationEngine may buy that exist in this experiment's universe
-REBALANCE_CANDIDATES = ["BND", "AGG", "TLT", "GLD", "VEA"]
+REBALANCE_CANDIDATES = ["BND", "AGG", "TLT", "GLD", "VEA", "BIL"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 30 Portfolio Archetypes (5 groups × 6 = 30)

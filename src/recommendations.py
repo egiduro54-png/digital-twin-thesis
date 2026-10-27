@@ -62,6 +62,11 @@ class RecommendationEngine:
     BOND_ETFS = ["BND", "AGG", "VCIT"]
     INTL_ETFS = ["VXUS", "EFA", "VEA", "IEMG"]
     BROAD_MARKET_ETFS = ["SPY", "VTI", "IVV"]
+    # The strategies' third class is cash (a T-bill ETF stands in for it).
+    # Alternatives (gold, REITs, commodities) live inside that class but may
+    # take at most ALT_CAP of the portfolio; the rest stays in cash.
+    CASH_ETFS = ["BIL"]
+    ALT_CAP = 0.05
 
     def __init__(
         self,
@@ -190,7 +195,7 @@ class RecommendationEngine:
         added = []
         # A class the profile needs but the portfolio lacks gets a default holding,
         # seeded with an epsilon weight so scale_to has something to scale.
-        defaults = {"fixed_income": self.BOND_ETFS, "other": ["GLD"], "equity": self.BROAD_MARKET_ETFS}
+        defaults = {"fixed_income": self.BOND_ETFS, "other": self.CASH_ETFS, "equity": self.BROAD_MARKET_ETFS}
         for g, share in target.items():
             if share > 0 and not plan.members(g):
                 t = plan.first_priced(defaults[g])
@@ -201,6 +206,11 @@ class RecommendationEngine:
         norm = sum(present.values())
         for g, s in present.items():
             plan.scale_to(plan.members(g), s / norm if norm > 0 else 0.0)
+        # The third class is cash: alternatives keep at most ALT_CAP of it
+        alts = [t for t in plan.members("other") if not plan.is_cash(t)]
+        excess = plan.share(alts) - min(self.ALT_CAP, target.get("other", 0.0))
+        cash = plan.first_priced(self.CASH_ETFS)
+        to_cash = plan.move(alts, cash, excess) if excess > 1e-9 and cash is not None else 0.0
         self._drift_applied = True
 
         new_eq = 100 * plan.group_share("equity")
@@ -217,6 +227,10 @@ class RecommendationEngine:
         if added:
             why += " Προστίθενται: " + ", ".join(t for _, t in added) + \
                    " (η κατηγορία έλειπε από το χαρτοφυλάκιο)."
+        if to_cash > 0:
+            why += (f" Το τρίτο σκέλος της στρατηγικής είναι μετρητά: {to_cash*100:.1f}% από "
+                    f"εναλλακτικές τοποθετήσεις ({', '.join(alts)}) μεταφέρεται στο {cash}, "
+                    f"ώστε αυτές να μην ξεπερνούν το {self.ALT_CAP*100:.0f}% του χαρτοφυλακίου.")
         if norm < 0.999:
             why += (" Λείπει κατηγορία-στόχος χωρίς διαθέσιμο τίτλο· το ποσοστό της "
                     "κατανεμήθηκε αναλογικά στις υπόλοιπες.")
@@ -512,7 +526,7 @@ class RecommendationEngine:
                                 "after": {"description": "Βλ. πρόταση εναρμόνισης προφίλ"},
                                 "improvement": "Καμία πρόσθετη συναλλαγή."}}]
 
-        dests = [t for t in (plan.first_priced(["GLD"]), plan.first_priced(["TLT", "IEF"])) if t]
+        dests = [t for t in (plan.first_priced(self.CASH_ETFS), plan.first_priced(["TLT", "IEF"])) if t]
         equities = plan.members("equity")
         if not dests or not equities:
             return []
@@ -529,8 +543,8 @@ class RecommendationEngine:
                             f"({', '.join(dests)})"),
                  "trades": plan.trades_since(before),
                  "why": (f"Η ιστορική μέγιστη απώλεια {max_dd:.1f}% υποδηλώνει σημαντικές ζημιές "
-                         "σε συνθήκες stress. Ο χρυσός και τα μακροπρόθεσμα ομόλογα ΗΠΑ "
-                         "λειτουργούν ιστορικά ως αντιστάθμιση σε πτώσεις μετοχών."),
+                         "σε συνθήκες stress. Τα μετρητά διατηρούν την αξία τους και τα μακροπρόθεσμα "
+                         "ομόλογα ΗΠΑ λειτουργούν ιστορικά ως αντιστάθμιση σε πτώσεις μετοχών."),
                  "impact": {"before": {"max_drawdown_pct": max_dd},
                             "after": {"defensive_added_pct": round(moved * 100, 1)},
                             "improvement": "Προσθέτει αντισταθμιστικό μαξιλάρι χρηματοδοτούμενο από μετοχές."}}]

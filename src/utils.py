@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 REFERENCE_TICKERS = ["SPY", "ACWI", "AGG"]
 # Must cover RecommendationEngine.BOND_ETFS / INTL_ETFS / BROAD_MARKET_ETFS
-# defaults and the drawdown reserve (GLD, TLT)
-REBALANCE_CANDIDATES = ["BND", "TLT", "GLD", "VXUS", "EFA"]
+# defaults, the cash class and drawdown reserve (BIL, TLT), and GLD for the
+# portfolios that already hold it
+REBALANCE_CANDIDATES = ["BND", "TLT", "GLD", "VXUS", "EFA", "BIL"]
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +65,15 @@ def build_portfolio(
     # ETFs the recommendations may buy, so their trades use real prices and
     # their effect on volatility can be estimated.
     extra = REFERENCE_TICKERS + REBALANCE_CANDIDATES
-    historical = fetch_historical_data(list(dict.fromkeys(tickers + extra)), years=history_years)
+    # DT_AS_OF=YYYY-MM-DD freezes the data at that close (to reproduce a past run)
+    window = {}
+    as_of = os.environ.get("DT_AS_OF")
+    if as_of:
+        end = pd.Timestamp(as_of) + pd.Timedelta(days=1)
+        start = end - pd.Timedelta(days=history_years * 365 + 30)
+        window = {"start_date": start.strftime("%Y-%m-%d"), "end_date": end.strftime("%Y-%m-%d")}
+    historical = fetch_historical_data(list(dict.fromkeys(tickers + extra)),
+                                       years=history_years, **window)
     if "ACWI" not in historical.columns and "SPY" in historical.columns:
         historical["ACWI"] = historical["SPY"]
 

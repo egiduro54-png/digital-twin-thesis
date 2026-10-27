@@ -175,3 +175,36 @@ class TestCoordinatedPlan:
         buys = sum(t["value"] for t in trades if t["action"] == "BUY")
         sells = sum(t["value"] for t in trades if t["action"] == "SELL")
         assert buys <= sells * 1.01 + 1
+
+
+class TestCashClass:
+    """The strategies' third class is cash; alternatives get only a small slice of it."""
+
+    def _with_cash_prices(self, assets, profile):
+        p = _make_portfolio(assets, risk_profile=profile)
+        p.historical_prices["BIL"] = 100 * np.exp(np.linspace(0, 0.04, len(p.historical_prices)))
+        return p
+
+    def test_missing_third_class_is_filled_with_cash_not_gold(self):
+        p = self._with_cash_prices([
+            _asset("SPY", 800, 100, "Equity ETF", "Equity"),
+            _asset("BND", 200, 100, "Bond ETF", "Fixed Income"),
+        ], "defensive")
+        engine = RecommendationEngine(p, RiskMonitor(p))
+        engine.generate_recommendations()
+        w = engine.plan.w
+        assert w.get("GLD", 0.0) == 0.0
+        assert w.get("BIL", 0.0) == pytest.approx(p.TARGET_ALLOCATION["defensive"]["other"], abs=0.02)
+
+    def test_gold_is_capped_and_the_rest_moves_to_cash(self):
+        p = self._with_cash_prices([
+            _asset("SPY", 300, 100, "Equity ETF", "Equity"),
+            _asset("BND", 300, 100, "Bond ETF", "Fixed Income"),
+            _asset("GLD", 400, 100, "Commodities ETF", "Commodity"),
+        ], "liquidity_plus")
+        engine = RecommendationEngine(p, RiskMonitor(p))
+        engine.generate_recommendations()
+        w = engine.plan.w
+        assert w["GLD"] <= RecommendationEngine.ALT_CAP + 1e-6
+        third = p.TARGET_ALLOCATION["liquidity_plus"]["other"]
+        assert w["GLD"] + w.get("BIL", 0.0) == pytest.approx(third, abs=0.02)

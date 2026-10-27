@@ -793,6 +793,7 @@ def _build_rebalanced_portfolio(portfolio, recs: list):
     bond_etfs = {"BND", "TLT", "IEF", "SHY", "AGG", "LQD", "HYG", "VCIT", "VCSH"}
     intl_etfs = {"VXUS", "EFA", "IEMG"}
     commodity_etfs = {"GLD", "SLV", "GSG"}
+    cash_etfs = {"BIL"}
 
     assets_by_ticker = {a.ticker: copy.copy(a) for a in portfolio.assets}
     for trade in trades:
@@ -812,6 +813,8 @@ def _build_rebalanced_portfolio(portfolio, recs: list):
                     ac, sector = "International Equity", "International ETF"
                 elif ticker in commodity_etfs:
                     ac, sector = "Commodity", "Commodities ETF"
+                elif ticker in cash_etfs:
+                    ac, sector = "Cash", "Cash ETF"
                 else:
                     ac, sector = "Equity", "Equity ETF"
                 assets_by_ticker[ticker] = Asset(

@@ -56,6 +56,9 @@ class RebalancePlan:
             return "fixed_income"
         return "other"
 
+    def is_cash(self, ticker: str) -> bool:
+        return self.meta(ticker).asset_class == "Cash"
+
     def is_international(self, ticker: str) -> bool:
         return self.meta(ticker).asset_class in INTERNATIONAL_CLASSES
 
