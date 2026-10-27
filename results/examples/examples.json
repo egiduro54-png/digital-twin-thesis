@@ -1,0 +1,588 @@
+{
+  "1_concentrated": {
+    "before": {
+      "value": 100257.0,
+      "volatility_pct": 16.77,
+      "max_drawdown_pct": -27.07,
+      "sharpe": 0.872,
+      "beta": 1.004,
+      "hhi": 0.415,
+      "weights_pct": {
+        "AAPL": 60.0,
+        "MSFT": 15.2,
+        "JPM": 14.9,
+        "BND": 9.9
+      },
+      "resilience": 38.2,
+      "ri_components": {
+        "stress": 42,
+        "sequential": 27,
+        "downside": 41,
+        "recovery": 64,
+        "diversification": 20,
+        "concentration": 10
+      },
+      "alerts": [
+        "Συγκέντρωση σε Μεμονωμένο Τίτλο",
+        "Συγκέντρωση στους 5 Κορυφαίους Τίτλους",
+        "Αριθμός Θέσεων",
+        "Συγκέντρωση σε Κλάδο (Sector)",
+        "Γεωγραφική Διαφοροποίηση",
+        "Volatility έναντι Στόχου",
+        "Μέγιστη Ιστορική Απώλεια (Max Drawdown)",
+        "Εναρμόνιση με Προφίλ Κινδύνου"
+      ],
+      "cautions": [],
+      "scenarios_pct": {
+        "market_down_30": -29.2,
+        "tech_crash": -28.5,
+        "financial_crisis_2008": -46.5,
+        "rates_up_200bps": -21.5,
+        "inflation_spike": -26.3
+      },
+      "custom_scenario": -15.1,
+      "worst_scenario": {
+        "scenario_id": "financial_crisis_2008",
+        "scenario_name": "2008 Financial Crisis",
+        "portfolio_loss": -46648.23,
+        "portfolio_loss_pct": -46.53
+      }
+    },
+    "after": {
+      "value": 100390.0,
+      "volatility_pct": 6.87,
+      "max_drawdown_pct": -19.53,
+      "sharpe": 0.346,
+      "beta": 0.441,
+      "hhi": 0.301,
+      "weights_pct": {
+        "BND": 49.9,
+        "AAPL": 13.9,
+        "BIL": 9.9,
+        "MSFT": 8.9,
+        "VXUS": 8.8,
+        "JPM": 8.6
+      },
+      "resilience": 63.5,
+      "ri_components": {
+        "stress": 74,
+        "sequential": 58,
+        "downside": 76,
+        "recovery": 47,
+        "diversification": 48,
+        "concentration": 74
+      },
+      "alerts": [],
+      "cautions": [
+        "Αριθμός Θέσεων",
+        "Μέγιστη Ιστορική Απώλεια (Max Drawdown)"
+      ],
+      "scenarios_pct": {
+        "market_down_30": -13.6,
+        "tech_crash": -10.2,
+        "financial_crisis_2008": -17.2,
+        "rates_up_200bps": -13.4,
+        "inflation_spike": -16.5
+      },
+      "custom_scenario": -9.0,
+      "worst_scenario": {
+        "scenario_id": "financial_crisis_2008",
+        "scenario_name": "2008 Financial Crisis",
+        "portfolio_loss": -17264.03,
+        "portfolio_loss_pct": -17.2
+      }
+    },
+    "plan_stats": {
+      "expected_return": 0.07126261639176956,
+      "volatility": 0.08684491110010815,
+      "sharpe": 0.3599821336190029
+    },
+    "recommendations": [
+      [
+        "critical",
+        "Αναδιάρθρωση για Εναρμόνιση με Προφίλ Κινδύνου"
+      ],
+      [
+        "critical",
+        "Μείωση Συγκέντρωσης AAPL"
+      ],
+      [
+        "critical",
+        "Μείωση Μεταβλητότητας στον Στόχο"
+      ],
+      [
+        "high",
+        "Προσθήκη Διεθνούς Έκθεσης"
+      ],
+      [
+        "high",
+        "Αύξηση Αριθμού Θέσεων"
+      ],
+      [
+        "high",
+        "Μείωση Συγκέντρωσης στον Κλάδο Technology"
+      ],
+      [
+        "low",
+        "Προσθήκη Αμυντικού Αποθέματος έναντι Απωλειών"
+      ]
+    ],
+    "trades": [
+      {
+        "ticker": "AAPL",
+        "action": "SELL",
+        "quantity": 133,
+        "price": 347.73,
+        "value": 46248.09
+      },
+      {
+        "ticker": "JPM",
+        "action": "SELL",
+        "quantity": 19,
+        "price": 331.58,
+        "value": 6300.02
+      },
+      {
+        "ticker": "MSFT",
+        "action": "SELL",
+        "quantity": 12,
+        "price": 524.51,
+        "value": 6294.12
+      },
+      {
+        "ticker": "BND",
+        "action": "BUY",
+        "quantity": 564,
+        "price": 71.2,
+        "value": 40156.8
+      },
+      {
+        "ticker": "BIL",
+        "action": "BUY",
+        "quantity": 109,
+        "price": 91.63,
+        "value": 9987.67
+      },
+      {
+        "ticker": "VXUS",
+        "action": "BUY",
+        "quantity": 107,
+        "price": 82.53,
+        "value": 8830.71
+      }
+    ],
+    "sells": 58842,
+    "buys": 58975
+  },
+  "2_defensive_drift": {
+    "before": {
+      "value": 108265.0,
+      "volatility_pct": 11.15,
+      "max_drawdown_pct": -23.78,
+      "sharpe": 0.823,
+      "beta": 0.859,
+      "hhi": 0.276,
+      "weights_pct": {
+        "SPY": 46.3,
+        "QQQ": 16.3,
+        "BND": 13.9,
+        "AAPL": 9.3,
+        "MSFT": 4.8,
+        "GLD": 4.7,
+        "JNJ": 4.6
+      },
+      "resilience": 54.6,
+      "ri_components": {
+        "stress": 60,
+        "sequential": 46,
+        "downside": 57,
+        "recovery": 53,
+        "diversification": 21,
+        "concentration": 99
+      },
+      "alerts": [
+        "Γεωγραφική Διαφοροποίηση",
+        "Volatility έναντι Στόχου",
+        "Εναρμόνιση με Προφίλ Κινδύνου"
+      ],
+      "cautions": [
+        "Αριθμός Θέσεων",
+        "Μέγιστη Ιστορική Απώλεια (Max Drawdown)"
+      ],
+      "scenarios_pct": {
+        "market_down_30": -25.6,
+        "tech_crash": -12.1,
+        "financial_crisis_2008": -40.0,
+        "rates_up_200bps": -12.4,
+        "inflation_spike": -13.5
+      },
+      "custom_scenario": -13.4,
+      "worst_scenario": {
+        "scenario_id": "financial_crisis_2008",
+        "scenario_name": "2008 Financial Crisis",
+        "portfolio_loss": -43357.46,
+        "portfolio_loss_pct": -40.05
+      }
+    },
+    "after": {
+      "value": 108865.0,
+      "volatility_pct": 5.13,
+      "max_drawdown_pct": -15.94,
+      "sharpe": -0.076,
+      "beta": 0.247,
+      "hhi": 0.392,
+      "weights_pct": {
+        "BND": 59.6,
+        "BIL": 14.9,
+        "VXUS": 7.9,
+        "SPY": 7.0,
+        "GLD": 4.7,
+        "QQQ": 2.6,
+        "AAPL": 1.6,
+        "MSFT": 1.0,
+        "JNJ": 0.7
+      },
+      "resilience": 68.2,
+      "ri_components": {
+        "stress": 87,
+        "sequential": 70,
+        "downside": 84,
+        "recovery": 41,
+        "diversification": 43,
+        "concentration": 82
+      },
+      "alerts": [],
+      "cautions": [
+        "Αριθμός Θέσεων",
+        "Μέγιστη Ιστορική Απώλεια (Max Drawdown)"
+      ],
+      "scenarios_pct": {
+        "market_down_30": -8.0,
+        "tech_crash": -3.3,
+        "financial_crisis_2008": -4.7,
+        "rates_up_200bps": -10.2,
+        "inflation_spike": -12.1
+      },
+      "custom_scenario": -6.7,
+      "worst_scenario": {
+        "scenario_id": "inflation_spike",
+        "scenario_name": "Inflation Spike",
+        "portfolio_loss": -13161.51,
+        "portfolio_loss_pct": -12.09
+      }
+    },
+    "plan_stats": {
+      "expected_return": 0.038718245276934536,
+      "volatility": 0.058540342845078024,
+      "sharpe": -0.021895237724478624
+    },
+    "recommendations": [
+      [
+        "critical",
+        "Αναδιάρθρωση για Εναρμόνιση με Προφίλ Κινδύνου"
+      ],
+      [
+        "critical",
+        "Μείωση Μεταβλητότητας στον Στόχο"
+      ],
+      [
+        "high",
+        "Προσθήκη Διεθνούς Έκθεσης"
+      ],
+      [
+        "medium",
+        "Αύξηση Αριθμού Θέσεων"
+      ],
+      [
+        "low",
+        "Προσθήκη Αμυντικού Αποθέματος έναντι Απωλειών"
+      ]
+    ],
+    "trades": [
+      {
+        "ticker": "SPY",
+        "action": "SELL",
+        "quantity": 56,
+        "price": 759.97,
+        "value": 42558.32
+      },
+      {
+        "ticker": "QQQ",
+        "action": "SELL",
+        "quantity": 21,
+        "price": 704.4,
+        "value": 14792.4
+      },
+      {
+        "ticker": "AAPL",
+        "action": "SELL",
+        "quantity": 24,
+        "price": 347.73,
+        "value": 8345.52
+      },
+      {
+        "ticker": "JNJ",
+        "action": "SELL",
+        "quantity": 16,
+        "price": 263.81,
+        "value": 4220.96
+      },
+      {
+        "ticker": "MSFT",
+        "action": "SELL",
+        "quantity": 8,
+        "price": 524.51,
+        "value": 4196.08
+      },
+      {
+        "ticker": "BND",
+        "action": "BUY",
+        "quantity": 701,
+        "price": 71.2,
+        "value": 49911.2
+      },
+      {
+        "ticker": "BIL",
+        "action": "BUY",
+        "quantity": 177,
+        "price": 91.63,
+        "value": 16218.51
+      },
+      {
+        "ticker": "VXUS",
+        "action": "BUY",
+        "quantity": 104,
+        "price": 82.53,
+        "value": 8583.12
+      }
+    ],
+    "sells": 74113,
+    "buys": 74713
+  },
+  "3_4_balanced": {
+    "before": {
+      "value": 330887.0,
+      "volatility_pct": 10.59,
+      "max_drawdown_pct": -23.52,
+      "sharpe": 0.897,
+      "beta": 0.824,
+      "hhi": 0.253,
+      "weights_pct": {
+        "SPY": 45.9,
+        "BND": 10.8,
+        "AAPL": 10.5,
+        "JPM": 8.0,
+        "MSFT": 7.9,
+        "GLD": 5.5,
+        "JNJ": 4.8,
+        "VXUS": 2.5,
+        "VNQ": 2.1,
+        "GOOGL": 1.9
+      },
+      "resilience": 55.1,
+      "ri_components": {
+        "stress": 58,
+        "sequential": 47,
+        "downside": 59,
+        "recovery": 53,
+        "diversification": 31,
+        "concentration": 89
+      },
+      "alerts": [
+        "Εναρμόνιση με Προφίλ Κινδύνου"
+      ],
+      "cautions": [
+        "Γεωγραφική Διαφοροποίηση",
+        "Volatility έναντι Στόχου",
+        "Μέγιστη Ιστορική Απώλεια (Max Drawdown)"
+      ],
+      "scenarios_pct": {
+        "market_down_30": -25.1,
+        "tech_crash": -13.2,
+        "financial_crisis_2008": -42.5,
+        "rates_up_200bps": -12.1,
+        "inflation_spike": -13.8
+      },
+      "custom_scenario": -13.1,
+      "worst_scenario": {
+        "scenario_id": "financial_crisis_2008",
+        "scenario_name": "2008 Financial Crisis",
+        "portfolio_loss": -140497.4,
+        "portfolio_loss_pct": -42.46
+      }
+    },
+    "after": {
+      "value": 332408.0,
+      "volatility_pct": 7.06,
+      "max_drawdown_pct": -19.46,
+      "sharpe": 0.384,
+      "beta": 0.471,
+      "hhi": 0.261,
+      "weights_pct": {
+        "BND": 44.8,
+        "SPY": 20.3,
+        "VXUS": 9.9,
+        "BIL": 5.0,
+        "AAPL": 4.7,
+        "GLD": 3.6,
+        "MSFT": 3.6,
+        "JPM": 3.6,
+        "JNJ": 2.1,
+        "VNQ": 1.4,
+        "GOOGL": 0.9
+      },
+      "resilience": 65.8,
+      "ri_components": {
+        "stress": 75,
+        "sequential": 60,
+        "downside": 75,
+        "recovery": 47,
+        "diversification": 44,
+        "concentration": 100
+      },
+      "alerts": [],
+      "cautions": [
+        "Μέγιστη Ιστορική Απώλεια (Max Drawdown)"
+      ],
+      "scenarios_pct": {
+        "market_down_30": -14.8,
+        "tech_crash": -7.1,
+        "financial_crisis_2008": -20.1,
+        "rates_up_200bps": -11.4,
+        "inflation_spike": -13.4
+      },
+      "custom_scenario": -9.4,
+      "worst_scenario": {
+        "scenario_id": "financial_crisis_2008",
+        "scenario_name": "2008 Financial Crisis",
+        "portfolio_loss": -66707.35,
+        "portfolio_loss_pct": -20.07
+      }
+    },
+    "plan_stats": {
+      "expected_return": 0.07178076497670369,
+      "volatility": 0.08733551813261194,
+      "sharpe": 0.36389278561841426
+    },
+    "recommendations": [
+      [
+        "critical",
+        "Αναδιάρθρωση για Εναρμόνιση με Προφίλ Κινδύνου"
+      ],
+      [
+        "medium",
+        "Μείωση Μεταβλητότητας στον Στόχο"
+      ],
+      [
+        "medium",
+        "Προσθήκη Διεθνούς Έκθεσης"
+      ],
+      [
+        "low",
+        "Προσθήκη Αμυντικού Αποθέματος έναντι Απωλειών"
+      ]
+    ],
+    "trades": [
+      {
+        "ticker": "SPY",
+        "action": "SELL",
+        "quantity": 111,
+        "price": 759.97,
+        "value": 84356.67
+      },
+      {
+        "ticker": "AAPL",
+        "action": "SELL",
+        "quantity": 55,
+        "price": 347.73,
+        "value": 19125.15
+      },
+      {
+        "ticker": "JPM",
+        "action": "SELL",
+        "quantity": 44,
+        "price": 331.58,
+        "value": 14589.52
+      },
+      {
+        "ticker": "MSFT",
+        "action": "SELL",
+        "quantity": 27,
+        "price": 524.51,
+        "value": 14161.77
+      },
+      {
+        "ticker": "JNJ",
+        "action": "SELL",
+        "quantity": 33,
+        "price": 263.81,
+        "value": 8705.73
+      },
+      {
+        "ticker": "GLD",
+        "action": "SELL",
+        "quantity": 17,
+        "price": 366.61,
+        "value": 6232.37
+      },
+      {
+        "ticker": "GOOGL",
+        "action": "SELL",
+        "quantity": 11,
+        "price": 320.21,
+        "value": 3522.31
+      },
+      {
+        "ticker": "VNQ",
+        "action": "SELL",
+        "quantity": 25,
+        "price": 92.69,
+        "value": 2317.25
+      },
+      {
+        "ticker": "BND",
+        "action": "BUY",
+        "quantity": 1591,
+        "price": 71.2,
+        "value": 113279.2
+      },
+      {
+        "ticker": "VXUS",
+        "action": "BUY",
+        "quantity": 300,
+        "price": 82.53,
+        "value": 24759.0
+      },
+      {
+        "ticker": "BIL",
+        "action": "BUY",
+        "quantity": 180,
+        "price": 91.63,
+        "value": 16493.4
+      }
+    ],
+    "sells": 153011,
+    "buys": 154532,
+    "monte_carlo": {
+      "current": {
+        "probability": 0.484,
+        "median": 651630.781,
+        "p5": 340000.247,
+        "p95": 1266186.065,
+        "invested": 390886.942,
+        "expected_annual_return": 0.065,
+        "annual_volatility": 0.135
+      },
+      "after_dt": {
+        "probability": 0.391,
+        "median": 613084.357,
+        "p5": 389870.606,
+        "p95": 961553.068,
+        "invested": 390886.942,
+        "expected_annual_return": 0.054,
+        "annual_volatility": 0.093
+      },
+      "target": 662000.0
+    }
+  }
+}
